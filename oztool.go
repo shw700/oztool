@@ -73,9 +73,44 @@ var globalLS *gtk.ListStore
 var profileBox *gtk.Box = nil
 var Notebook *gtk.Notebook = nil
 var notebookPages map[string]*gtk.Box
+var CurProfile map[string]*json.RawMessage
+var ProfileNames []string
 
 
-var general_config = []configVal {
+var extforwarder_config_data = []configVal {
+	{ "name", "Name", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "dynamic", "Dynamic", DataTypeBool, false, nil, ConfigOption{0, nil} },
+	{ "multi", "Multi", DataTypeBool, false, nil, ConfigOption{0, nil} },
+	{ "ext_proto", "External Protocol", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "proto", "Protocol", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "addr", "Address", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "target_host", "Target Host", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "target_port", "Target Port", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "socket_owner", "Socket Owner", DataTypeString, "", nil, ConfigOption{0, nil} },
+}
+
+var whitelist_config_data = []configVal {
+	{ "path", "Path", DataTypeString, "", nil, ConfigOption{ConfigOptionFilePicker, nil} },
+	{ "target", "Target", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "read_only", "Read Only", DataTypeBool, true, nil, ConfigOption{0, nil} },
+	{ "can_create", "Can Create", DataTypeBool, false, nil, ConfigOption{0, nil} },
+	{ "ignore", "Ignore", DataTypeBool, false, nil, ConfigOption{0, nil} },
+	{ "force", "Force", DataTypeBool, false, nil, ConfigOption{0, nil} },
+	{ "no_follow", "No Follow", DataTypeBool, true, nil, ConfigOption{0, nil} },
+	{ "allow_suid", "Allow Setuid", DataTypeBool, false, nil, ConfigOption{0, nil} },
+}
+
+var blacklist_config_data = []configVal {
+	{ "path", "Path", DataTypeString, "", nil, ConfigOption{ConfigOptionFilePicker, nil} },
+	{ "no_follow", "No Follow", DataTypeBool, true, nil, ConfigOption{0, nil} },
+}
+
+var envvar_config_data = []configVal {
+	{ "name", "Name", DataTypeString, "", nil, ConfigOption{0, nil} },
+	{ "value", "Value", DataTypeString, "", nil, ConfigOption{0, nil} },
+}
+
+var general_config_template = []configVal {
 	{ "name", "Name", DataTypeString, "", nil, ConfigOption{0, nil} },
 	{ "path", "Path", DataTypeString, "", nil, ConfigOption{ConfigOptionFilePicker, nil} },
 	{ "paths", "Paths", DataTypeStrArray, []string{}, nil, ConfigOption{0, nil} },
@@ -92,7 +127,7 @@ var general_config = []configVal {
 	{ "allowed_groups", "Allowed Groups", DataTypeStrArray, "", nil, ConfigOption{0, nil} },
 }
 
-var X11_config = []configVal {
+var X11_config_template = []configVal {
 	{ "enabled", "Enabled", DataTypeBool, true, nil, ConfigOption{0, nil} },
 	{ "tray_icon", "Tray Icon", DataTypeString, "", nil, ConfigOption{ConfigOptionImage, nil} },
 	{ "window_icon", "Window Icon", DataTypeString, "", nil, ConfigOption{ConfigOptionImage, nil} },
@@ -104,13 +139,13 @@ var X11_config = []configVal {
 	{ "border", "Border", DataTypeBool, true, nil, ConfigOption{0, nil} },
 }
 
-var network_config = []configVal {
+var network_config_template = []configVal {
 	{ "type", "Network Type", DataTypeStrMulti, "none", []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil} },
 	{ "bridge", "Bridge", DataTypeString, "", nil, ConfigOption{0, nil} },
 	{ "dns_mode", "DNS Mode", DataTypeStrMulti, "none", []interface{}{ "none", "pass", "dhcp" }, ConfigOption{0, nil} },
 }
 
-var seccomp_config = []configVal {
+var seccomp_config_template = []configVal {
 	{ "mode", "Mode", DataTypeStrMulti, "disabled", []interface{}{ "train", "whitelist", "blacklist", "disabled" }, ConfigOption{0, nil} },
 	{ "enforce", "Enforce", DataTypeBool, true, nil, ConfigOption{0, nil} },
 	{ "debug", "Debug Mode", DataTypeBool, true, nil, ConfigOption{0, nil} },
@@ -121,12 +156,16 @@ var seccomp_config = []configVal {
 	{ "extradefs", "Extra Definitions", DataTypeStrArray, []string{}, nil, ConfigOption{0, nil} },
 }
 
-var allTabs = map[string][]configVal { "general": general_config, "x11": X11_config, "network": network_config, "seccomp": seccomp_config }
-var allTabsOrdered = []string{ "general", "x11", "network", "seccomp" }
+var whitelist_config_template = []configVal {
+	{ "", "Whitelist Entry", DataTypeStructArray, nil, nil, ConfigOption{0, nil} },
+}
+
+var allTabs = map[string]*[]configVal { "general": &general_config, "x11": &X11_config, "network": &network_config, "seccomp": &seccomp_config, "whitelist": &whitelist_config }
+var allTabsOrdered = []string{ "general", "x11", "network", "whitelist", "seccomp" }
 
 
 var file_menu = []menuVal {
-	{ "Open Profile", "Open oz profile JSON configuration file", nil, "<Ctrl>o" },
+	{ "Open Profile", "Open oz profile JSON configuration file", menu_Open, "<Ctrl>o" },
 	{ "Save As", "Save current oz profile to JSON configuration file", menu_Save, "<Ctrl>s" },
 	{ "Exit", "Quit oztool", menu_Quit, "<Ctrl>q" },
 }
@@ -134,6 +173,8 @@ var file_menu = []menuVal {
 var action_menu = []menuVal {
 	{ "Run application", "Run the application in its oz sandbox", nil, "<Shift><Alt>F1" },
 }
+
+var general_config, X11_config, network_config, seccomp_config, whitelist_config []configVal
 
 var allMenus = map[string][]menuVal { "File": file_menu, "Action": action_menu }
 var allMenusOrdered = []string{ "File", "Action" }
@@ -335,14 +376,6 @@ func get_label(text string) *gtk.Label {
 	return label
 }
 
-func clearNotebookPages(notebook *gtk.Notebook) {
-
-	for i := notebook.GetNPages(); i >= 0; i-- {
-		notebook.RemovePage(i)
-	}
-
-}
-
 func fillNotebookPages(notebook *gtk.Notebook) {
 
 	var pages = []string{ "General", "Whitelist", "Blacklist", "X11", "Environment", "Network", "seccomp", "Forwarders" }
@@ -404,13 +437,17 @@ func createListStore(nadded int) *gtk.ListStore {
 	return listStore
 }
 
+func menu_Open() {
+	fmt.Println("OPEN!")
+}
+
 func menu_Save() {
 	fmt.Println("SAVE!")
 
 	jstr := ""
 
 	for i := 0; i < len(allTabsOrdered); i++ {
-		jstr += serializeConfigToJSON(allTabs[allTabsOrdered[i]], allTabsOrdered[i], 1)
+		jstr += serializeConfigToJSON(*allTabs[allTabsOrdered[i]], allTabsOrdered[i], 1)
 	}
 
 	jstr += "}"
@@ -529,16 +566,42 @@ func tv_click(tv *gtk.TreeView, listStore *gtk.ListStore) {
 			if err == nil {
 				fmt.Println("LIST INDEX: ", lIndex)
 				fmt.Println("PROFILE BOX = ", profileBox)
-//				Notebook.Destroy()
-//				Notebook = createNotebook()
-//				profileBox.Add(Notebook)
-				profileBox.Add(get_label("HMM"))
 
-//				clearNotebookPages(Notebook)
-//				fillNotebookPages(Notebook)
+				fmt.Println("XXX indexing ", lIndex, " into ", len(ProfileNames))
+
+				Notebook.Destroy()
+				showProfileByPath(ProfileNames[lIndex])
+/*				CurProfile, err = loadProfileFile(ProfileNames[lIndex])
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error loading profile data:", err)
+				}
+
+				Notebook.Destroy()
+				Notebook = createNotebook()
+				profileBox.Add(Notebook)
+
+				for tname := range allTabs {
+					tbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+
+					if err != nil {
+						log.Fatal("Unable to create box:", err)
+					}
+
+					populate_profile_tab(tbox, allTabs[tname])
+					notebookPages[tname].Add(tbox)
+				}
+
+				Notebook.ShowAll()
+				profileBox.ShowAll() */
+
+
+
+
 //				clear_container(notebookPages["general"], true)
 //				notebookPages["general"].Add(get_label("OK"))
-//				populate_profile_container(allProfiles[lIndex], notebookPages["general"])
+			} else {
+				fmt.Fprintf(os.Stderr, "Error loading profile from selected index:", err)
 			}
 
 			fmt.Println("DATAI: ", rdata.(*gtk.TreePath).String())
@@ -705,7 +768,7 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
 				} else {
 					h.PackStart(img, false, true, 10)
 
-					pb, err := gdk.PixbufNewFromFileAtScale(valConfig[i].Value.(string), 64, 64, true)
+					pb, err := gdk.PixbufNewFromFileAtScale(valConfig[i].Value.(string), 48, 48, true)
 
 					if err != nil {
 						fmt.Println("Error: could not load pixel buf from file:", err)
@@ -743,11 +806,34 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
 		} else if valConfig[i].Type == DataTypeStrArray {
 			h.PackStart(get_label(valConfig[i].Description+":"), false, true, 10)
 			h.PackStart(get_label("[Unsupported]"), false, true, 10)
+		} else if valConfig[i].Type == DataTypeStructArray {
+			fmt.Println("!!!! struct array")
+			fmt.Println("typeof = ", reflect.TypeOf(valConfig[i].Value))
+			fmt.Println("val = ", valConfig[i].Value)
+		} else {
+			fmt.Println("***** UNSUPPORTED -> " + valConfig[i].Name + " / " + valConfig[i].Description)
 		}
 
 		container.Add(h)
 	}
 
+}
+
+func getChildAsRMA(jdata map[string]*json.RawMessage, field string) []map[string]*json.RawMessage {
+	var newm []map[string]*json.RawMessage
+
+	if jdata[field] == nil {
+		return nil
+	}
+
+	err := json.Unmarshal(*jdata[field], &newm)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error in parsing field %s: %v\n", field, err)
+		return nil
+	}
+
+	return newm
 }
 
 func getChildAsRM(jdata map[string]*json.RawMessage, field string) map[string]*json.RawMessage {
@@ -760,10 +846,22 @@ func getChildAsRM(jdata map[string]*json.RawMessage, field string) map[string]*j
 	err := json.Unmarshal(*jdata[field], &newm)
 
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error in parsing field %s: %v\n", field, err)
 		return nil
 	}
 
 	return newm
+}
+
+func populateValuesA(config []configVal, jdata []map[string]*json.RawMessage) []configVal {
+	fmt.Println("ATTEMPTING WITH VALUE # = ", len(jdata))
+
+	for i := 0; i < len(jdata); i++ {
+		val := populateValues(config, jdata[i])
+		fmt.Println("GOT IT: ", val)
+	}
+
+	return nil
 }
 
 func populateValues(config []configVal, jdata map[string]*json.RawMessage) []configVal {
@@ -822,6 +920,8 @@ func populateValues(config []configVal, jdata map[string]*json.RawMessage) []con
 
 			config[c].Value = sval
 			fmt.Println("--- deserialized string/multi = ", sval)
+		} else if config[c].Type == DataTypeStructArray {
+			fmt.Println("\n\n\n\nUNSUPPORTEDMULTI!!")
 		} else {
 			fmt.Println("UNSUPPORTED: ", jname)
 		}
@@ -832,27 +932,30 @@ func populateValues(config []configVal, jdata map[string]*json.RawMessage) []con
 	return config
 }
 
-func main() {
-	loadPreferences()
-	gtk.Init(nil)
+func reset_configs() {
+	general_config = make([]configVal, len(general_config_template))
+	X11_config = make([]configVal, len(X11_config_template))
+	network_config = make([]configVal, len(network_config_template))
+	seccomp_config = make([]configVal, len(seccomp_config_template))
+	whitelist_config = make([]configVal, len(whitelist_config_template))
+	copy(general_config, general_config_template)
+	copy(X11_config, X11_config_template)
+	copy(network_config, network_config_template)
+	copy(seccomp_config, seccomp_config_template)
+	copy(whitelist_config, whitelist_config_template)
+}
 
-	const PROFILES_DIR = "/var/lib/oz/cells.d"
-	profileNames, err := LoadProfilePaths(PROFILES_DIR)
+func showProfileByPath(path string) {
+	reset_configs()
+	var err error
+	CurProfile, err = loadProfileFile(path)
 
 	if err != nil {
-		log.Fatal("Error reading contents of profiles directory:", err)
+		fmt.Println("Unexpected error reading profile from file: ", path)
+		return
 	}
 
-	fmt.Println("profiles len = ", len(profileNames))
-	fmt.Println("names = ", profileNames)
-	xxx, err := loadProfileFile(profileNames[0])
-
-	if err != nil {
-		fmt.Println("XXXXXXXXXXXXXXXXXX: error")
-	}
-	fmt.Println("seccomp: ", reflect.TypeOf(xxx["seccomp"]))
-
-	jseccomp := getChildAsRM(xxx, "seccomp")
+	jseccomp := getChildAsRM(CurProfile, "seccomp")
 
 	if jseccomp == nil {
 		log.Fatal("Error: could not parse seccomp values")
@@ -860,8 +963,7 @@ func main() {
 
 	seccomp_config = populateValues(seccomp_config, jseccomp)
 
-
-	jx11 := getChildAsRM(xxx, "xserver")
+	jx11 := getChildAsRM(CurProfile, "xserver")
 
 	if jx11 == nil {
 		fmt.Fprintf(os.Stderr, "Error: could not parse X11 values\n")
@@ -869,8 +971,85 @@ func main() {
 
 	X11_config = populateValues(X11_config, jx11)
 
-	general_config = populateValues(general_config, xxx)
+	jwhitelist := getChildAsRMA(CurProfile, "whitelist")
 
+	if jwhitelist == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not parse whitelist values\n")
+	}
+
+	whitelist_config = populateValuesA(whitelist_config, jwhitelist)
+
+
+	general_config = populateValues(general_config, CurProfile)
+
+
+
+	notebookPages = make(map[string]*gtk.Box)
+	Notebook = createNotebook()
+	profileBox.Add(Notebook)
+
+	for tname := range allTabs {
+		tbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+
+		if err != nil {
+			log.Fatal("Unable to create box:", err)
+		}
+
+		populate_profile_tab(tbox, *allTabs[tname])
+		notebookPages[tname].Add(tbox)
+	}
+
+	profileBox.ShowAll()
+}
+
+func main() {
+	reset_configs()
+	loadPreferences()
+	gtk.Init(nil)
+
+	const PROFILES_DIR = "/var/lib/oz/cells.d"
+	var err error
+	ProfileNames, err = LoadProfilePaths(PROFILES_DIR)
+
+	if err != nil {
+		log.Fatal("Error reading contents of profiles directory:", err)
+	}
+
+
+	fmt.Println("profiles len = ", len(ProfileNames))
+	fmt.Println("names = ", ProfileNames)
+	CurProfile, err = loadProfileFile(ProfileNames[0])
+
+	if err != nil {
+		fmt.Println("XXXXXXXXXXXXXXXXXX: error")
+	}
+	fmt.Println("seccomp: ", reflect.TypeOf(CurProfile["seccomp"]))
+
+	jseccomp := getChildAsRM(CurProfile, "seccomp")
+
+	if jseccomp == nil {
+		log.Fatal("Error: could not parse seccomp values")
+	}
+
+	seccomp_config = populateValues(seccomp_config, jseccomp)
+
+	jx11 := getChildAsRM(CurProfile, "xserver")
+
+	if jx11 == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not parse X11 values\n")
+	}
+
+	X11_config = populateValues(X11_config, jx11)
+
+	jwhitelist := getChildAsRMA(CurProfile, "whitelist")
+
+	if jwhitelist == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not parse whitelist values\n")
+	}
+
+	whitelist_config = populateValuesA(whitelist_config, jwhitelist)
+
+	general_config = populateValues(general_config, CurProfile)
 
 
 
@@ -915,7 +1094,7 @@ func main() {
 	mainWin.Add(scrollbox)
 	scrollbox.Add(box)
 
-	pbox := setup_profiles_list(profileNames)
+	pbox := setup_profiles_list(ProfileNames)
 	profileBox = box
 	pbox.SetHAlign(gtk.ALIGN_START)
 	pbox.SetVAlign(gtk.ALIGN_FILL)
@@ -933,7 +1112,7 @@ func main() {
 			log.Fatal("Unable to create box:", err)
 		}
 
-		populate_profile_tab(tbox, allTabs[tname])
+		populate_profile_tab(tbox, *allTabs[tname])
 		notebookPages[tname].Add(tbox)
 	}
 
