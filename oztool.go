@@ -127,7 +127,7 @@ var allTabsOrdered = []string{ "general", "x11", "network", "seccomp" }
 
 var file_menu = []menuVal {
 	{ "Open Profile", "Open oz profile JSON configuration file", nil, "<Ctrl>o" },
-	{ "Save As", "Save current oz profile to JSON configuration file", nil, "<Ctrl>s" },
+	{ "Save As", "Save current oz profile to JSON configuration file", menu_Save, "<Ctrl>s" },
 	{ "Exit", "Quit oztool", menu_Quit, "<Ctrl>q" },
 }
 
@@ -205,6 +205,78 @@ func loadPreferences() bool {
 
 	fmt.Println(userPrefs)
 	return true
+}
+
+func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) string {
+	result := "{\n"
+	first := true
+	padding := 0
+
+	if secname != "general" {
+		result = ", \"" + secname + "\": {\n"
+	}
+
+	if fmtlevel > 0 {
+
+		for i := 0; i < len(config); i++ {
+			if len(config[i].Name) > padding {
+				padding = len(config[i].Name)
+			}
+		}
+
+	}
+
+	for i := 0; i < len(config); i++ {
+
+		if secname == "general" {
+			result += " "
+		} else {
+			result += "     "
+		}
+
+		if !first {
+			result += ","
+		} else {
+			first = false
+			result += " "
+		}
+
+		result += "\"" + config[i].Name + "\": "
+
+		if fmtlevel > 0 {
+
+			for s := 0; s < padding - len(config[i].Name); s++ {
+				result += " "
+			}
+
+		}
+
+		if config[i].Type == DataTypeString || config[i].Type == DataTypeStrMulti {
+			result += "\"" + config[i].Value.(string) + "\""
+		} else if config[i].Type == DataTypeBool {
+			if config[i].Value.(bool) == true {
+				result += "true"
+			} else {
+				result += "false"
+			}
+		} else if config[i].Type == DataTypeInt || config[i].Type == DataTypeUInt {
+			result += fmt.Sprintf("%v", config[i].Value)
+		} else if config[i].Type == DataTypeStrArray {
+			result += "[]"
+		} else {
+			result += "\"unsupported\""
+		}
+
+		result += "\n"
+	}
+
+	if secname == "general" {
+		result += "\n"
+	} else {
+		result += "}\n"
+	}
+
+	return result
 }
 
 func get_radiobutton(group *gtk.RadioButton, label string, activated bool) *gtk.RadioButton {
@@ -332,6 +404,20 @@ func createListStore(nadded int) *gtk.ListStore {
 	return listStore
 }
 
+func menu_Save() {
+	fmt.Println("SAVE!")
+
+	jstr := ""
+
+	for i := 0; i < len(allTabsOrdered); i++ {
+		jstr += serializeConfigToJSON(allTabs[allTabsOrdered[i]], allTabsOrdered[i], 1)
+	}
+
+	jstr += "}"
+
+	fmt.Println(jstr)
+}
+
 func menu_Quit() {
 	fmt.Println("Quitting on user instruction.")
 	gtk.MainQuit()
@@ -443,7 +529,12 @@ func tv_click(tv *gtk.TreeView, listStore *gtk.ListStore) {
 			if err == nil {
 				fmt.Println("LIST INDEX: ", lIndex)
 				fmt.Println("PROFILE BOX = ", profileBox)
-				clearNotebookPages(Notebook)
+//				Notebook.Destroy()
+//				Notebook = createNotebook()
+//				profileBox.Add(Notebook)
+				profileBox.Add(get_label("HMM"))
+
+//				clearNotebookPages(Notebook)
 //				fillNotebookPages(Notebook)
 //				clear_container(notebookPages["general"], true)
 //				notebookPages["general"].Add(get_label("OK"))
@@ -599,7 +690,7 @@ func str_in_array(needle string, haystack[]string, nocase bool) bool {
 func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
 
 	for i := 0; i < len(valConfig); i++ {
-fmt.Println("current one is: ", valConfig[i].Name)
+//fmt.Println("XXX: current one is: ", valConfig[i].Name)
 		h := get_hbox()
 
 		if valConfig[i].Type == DataTypeString {
@@ -679,12 +770,12 @@ func populateValues(config []configVal, jdata map[string]*json.RawMessage) []con
 
 	for c := 0; c < len(config); c++ {
 		jname := config[c].Name
-		fmt.Println("Attempting to merge: ", jname)
+//		fmt.Println("XXX: Attempting to merge: ", jname)
 
 		_, ex := jdata[jname]
 
 		if !ex {
-			fmt.Println("Error: skipping over variable: ", jname)
+//			fmt.Println("Error: skipping over variable: ", jname)
 			continue
 		}
 
@@ -825,7 +916,7 @@ func main() {
 	scrollbox.Add(box)
 
 	pbox := setup_profiles_list(profileNames)
-	profileBox = pbox
+	profileBox = box
 	pbox.SetHAlign(gtk.ALIGN_START)
 	pbox.SetVAlign(gtk.ALIGN_FILL)
 	createMenu(box)
@@ -834,13 +925,6 @@ func main() {
 	notebookPages = make(map[string]*gtk.Box)
 	Notebook = createNotebook()
 	box.Add(Notebook)
-
-//	NotebookPages["general"].Add(pbox)
-//	box.Add(pbox)
-
-//	profileBox.Add(get_label("HEH"))
-//	profileBox.Add(get_label("HEH2"))
-
 
 	for tname := range allTabs {
 		tbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
@@ -853,9 +937,6 @@ func main() {
 		notebookPages[tname].Add(tbox)
 	}
 
-
-
-
 	if userPrefs.Winheight > 0 && userPrefs.Winwidth > 0 {
 		mainWin.Resize(int(userPrefs.Winwidth), int(userPrefs.Winheight))
 	} else {
@@ -866,6 +947,8 @@ func main() {
 		mainWin.Move(int(userPrefs.Winleft), int(userPrefs.Wintop))
 	}
 
+	fmt.Println("profilebox = ", profileBox)
+//	profileBox.Add(get_label("OK TEST"))
 	mainWin.ShowAll()
 	gtk.Main()      // GTK main loop; blocks until gtk.MainQuit() is run. 
 }
