@@ -529,6 +529,12 @@ func menu_Save() {
 	jstr := ""
 
 	for i := 0; i < len(allTabsOrdered); i++ {
+
+		if _, failed := allTabsA[allTabsOrdered[i]]; failed {
+			fmt.Println("Skipping over export of unsupported section: ", allTabsOrdered[i])
+			continue
+		}
+
 		jappend, err := serializeConfigToJSON(*allTabs[allTabsOrdered[i]], allTabsOrdered[i], 1)
 
 		if err != nil {
