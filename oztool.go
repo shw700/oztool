@@ -103,7 +103,7 @@ var extforwarder_config_data = []configVal {
 	{ "socket_owner", "Socket Owner", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
 }
 
-var whitelist_config_data = []configVal {
+var whitelist_config_template = []configVal {
 	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
 	{ "target", "Target", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
 	{ "read_only", "Read Only", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
@@ -114,12 +114,12 @@ var whitelist_config_data = []configVal {
 	{ "allow_suid", "Allow Setuid", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
 }
 
-var blacklist_config_data = []configVal {
+var blacklist_config_template = []configVal {
 	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
 	{ "no_follow", "No Follow", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
 }
 
-var envvar_config_data = []configVal {
+var envvar_config_template = []configVal {
 	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
 	{ "value", "Value", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
 }
@@ -170,12 +170,14 @@ var seccomp_config_template = []configVal {
 	{ "extradefs", "Extra Definitions", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
 }
 
-var whitelist_config_template = []configVal {
+/*var whitelist_config_template = []configVal {
 	{ "", "Whitelist Entry", DataTypeStructArray, nil, nil, nil, ConfigOption{0, nil, 0} },
-}
+} */
 
 var allTabs = map[string]*[]configVal { "general": &general_config, "x11": &X11_config, "network": &network_config, "seccomp": &seccomp_config, "whitelist": &whitelist_config }
-var allTabsOrdered = []string{ "general", "x11", "network", "whitelist", "seccomp" }
+var allTabsA = map[string]*[][]configVal { "whitelist": nil, "blacklist": nil, "environment": nil }
+
+var allTabsOrdered = []string{ "general", "x11", "network", "whitelist", "blacklist", "seccomp", "environment" }
 
 
 var file_menu = []menuVal {
@@ -188,7 +190,7 @@ var action_menu = []menuVal {
 	{ "Run application", "Run the application in its oz sandbox", nil, "<Shift><Alt>F1" },
 }
 
-var general_config, X11_config, network_config, seccomp_config, whitelist_config []configVal
+var general_config, X11_config, network_config, seccomp_config, whitelist_config, blacklist_config, environment_config []configVal
 
 var allMenus = map[string][]menuVal { "File": file_menu, "Action": action_menu }
 var allMenusOrdered = []string{ "File", "Action" }
@@ -816,6 +818,16 @@ func clear_container(container *gtk.Box, descend bool) {
 	})
 }
 
+func get_vbox() *gtk.Box {
+	vbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+
+	if err != nil {
+		log.Fatal("Unable to create vertical box:", err)
+	}
+
+	return vbox
+}
+
 func get_hbox() *gtk.Box {
 	hbox, err := gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 0)
 
@@ -839,6 +851,17 @@ func str_in_array(needle string, haystack[]string, nocase bool) bool {
     }
 
     return false
+}
+
+func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal) {
+
+	for i := 0; i < len(valConfigs); i++ {
+		h := get_vbox()
+		h.SetMarginTop(5)
+		populate_profile_tab(h, valConfigs[i])
+		container.PackStart(h, false, true, 10)
+	}
+
 }
 
 func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
@@ -980,19 +1003,26 @@ func getChildAsRM(jdata map[string]*json.RawMessage, field string) map[string]*j
 	return newm
 }
 
-func populateValuesA(config []configVal, jdata []map[string]*json.RawMessage) []configVal {
-	fmt.Println("ATTEMPTING WITH VALUE # = ", len(jdata))
+func populateValuesA(config []configVal, jdata []map[string]*json.RawMessage) [][]configVal {
+	config_copy := make([]configVal, len(config))
+	copy(config_copy, config)
+	allVals := make([][]configVal, 0)
+	fmt.Println("ATTEMPTING WITH JLEN # = ", len(jdata), " / CLEN = ", len(config))
 
 	for i := 0; i < len(jdata); i++ {
 		val := populateValues(config, jdata[i])
-		fmt.Println("GOT IT: ", val)
+		val_copy := make([]configVal, len(val))
+		copy(val_copy, val)
+		allVals = append(allVals, val_copy)
+		copy(config, config_copy)
 	}
 
-	return nil
+	return allVals
 }
 
 func populateValues(config []configVal, jdata map[string]*json.RawMessage) []configVal {
 
+//fmt.Println("--- config len was ", len(config))
 	for c := 0; c < len(config); c++ {
 		jname := config[c].Name
 //		fmt.Println("XXX: Attempting to merge: ", jname)
@@ -1065,11 +1095,14 @@ func reset_configs() {
 	network_config = make([]configVal, len(network_config_template))
 	seccomp_config = make([]configVal, len(seccomp_config_template))
 	whitelist_config = make([]configVal, len(whitelist_config_template))
+	blacklist_config = make([]configVal, len(blacklist_config_template))
+	environment_config = make([]configVal, len(envvar_config_template))
 	copy(general_config, general_config_template)
 	copy(X11_config, X11_config_template)
 	copy(network_config, network_config_template)
 	copy(seccomp_config, seccomp_config_template)
 	copy(whitelist_config, whitelist_config_template)
+	copy(environment_config, envvar_config_template)
 }
 
 func showProfileByPath(path string) {
@@ -1104,7 +1137,29 @@ func showProfileByPath(path string) {
 		fmt.Fprintf(os.Stderr, "Error: could not parse whitelist values\n")
 	}
 
-	whitelist_config = populateValuesA(whitelist_config, jwhitelist)
+	whitelist_config_array := populateValuesA(whitelist_config, jwhitelist)
+	allTabsA["whitelist"] = &whitelist_config_array
+
+//	fmt.Println("FINAL WHITELIST_CONFIG:")
+//	fmt.Println(whitelist_config_array)
+
+	jblacklist := getChildAsRMA(CurProfile, "blacklist")
+
+	if jblacklist == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not parse blacklist values\n")
+	}
+
+	blacklist_config_array := populateValuesA(blacklist_config, jblacklist)
+	allTabsA["blacklist"] = &blacklist_config_array
+
+	jenv := getChildAsRMA(CurProfile, "environment")
+
+	if jenv == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not parse environment values\n")
+	}
+
+	environment_config_array := populateValuesA(environment_config, jenv)
+	allTabsA["environment"] = &environment_config_array
 
 
 	general_config = populateValues(general_config, CurProfile)
@@ -1174,7 +1229,31 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: could not parse whitelist values\n")
 	}
 
-	whitelist_config = populateValuesA(whitelist_config, jwhitelist)
+	whitelist_config_array := populateValuesA(whitelist_config, jwhitelist)
+	allTabsA["whitelist"] = &whitelist_config_array
+/*	fmt.Println("2FINAL WHITELIST_CONFIG / len = ", len(whitelist_config_array))
+	for z := 0; z < len(whitelist_config_array); z++ {
+		fmt.Printf("%d: %v\n", z, whitelist_config_array[z])
+	} */
+
+	jblacklist := getChildAsRMA(CurProfile, "blacklist")
+
+	if jblacklist == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not parse blacklist values\n")
+	}
+
+	blacklist_config_array := populateValuesA(blacklist_config, jblacklist)
+	allTabsA["blacklist"] = &blacklist_config_array
+
+	jenv := getChildAsRMA(CurProfile, "environment")
+
+	if jenv == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not parse environment values\n")
+	}
+
+	environment_config_array := populateValuesA(environment_config, jenv)
+	allTabsA["environment"] = &environment_config_array
+
 
 	general_config = populateValues(general_config, CurProfile)
 
@@ -1232,12 +1311,33 @@ func main() {
 	Notebook = createNotebook()
 	box.Add(Notebook)
 
-	for tname := range allTabs {
+	for t := 0; t < len(allTabsOrdered); t++ {
+		tname := allTabsOrdered[t]
 		tbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
 
 		if err != nil {
 			log.Fatal("Unable to create box:", err)
 		}
+
+		if tname == "whitelist" {
+//			whitelistBox = tbox
+		}
+
+		if _, failed := allTabsA[tname]; failed {
+			scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
+
+			if err != nil {
+				log.Fatal("Unable to create new scrollbox:", err)
+			}
+
+			scrollbox.SetSizeRequest(600, 500)
+			populate_profile_tabA(tbox, *allTabsA[tname])
+			scrollbox.Add(tbox)
+			notebookPages[tname].Add(scrollbox)
+			continue
+		}
+
+		fmt.Println("NEXT")
 
 		populate_profile_tab(tbox, *allTabs[tname])
 		notebookPages[tname].Add(tbox)
