@@ -17,6 +17,7 @@ import (
 	"path"
 	"bufio"
 	"regexp"
+	"path/filepath"
 )
 
 
@@ -116,7 +117,7 @@ var general_config_template = []configVal {
 	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
 	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
 	{ "paths", "Paths", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil} },
-	{ "profile_path", "Profile Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
+	{ "profile_path", "Profile Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }} },
 	{ "default_params", "Default Parameters", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil} },
 	{ "reject_user_args", "Reject User Arguments", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
 	{ "auto_shutdown", "Auto Shutdown", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, ConfigOption{0, nil} },
@@ -153,8 +154,8 @@ var seccomp_config_template = []configVal {
 	{ "debug", "Debug Mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
 	{ "train", "Training Mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
 	{ "train_output", "Training Data Output", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
-	{ "whitelist", "seccomp Syscall Whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
-	{ "blacklist", "seccomp Syscall Blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
+	{ "whitelist", "seccomp Syscall Whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }} },
+	{ "blacklist", "seccomp Syscall Blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }} },
 	{ "extradefs", "Extra Definitions", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil} },
 }
 
@@ -810,8 +811,35 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
 					log.Fatal("Unable to create file choose button:", err)
 				}
 
+				fcb.Connect("file-set", func() {
+					val.SetText(fcb.GetFilename())
+				})
+
 				fcb.SetCurrentName(valConfig[i].Value.(string))
-				fcb.SetCurrentFolder("/usr/bin/")
+				fcb.SetCurrentFolder(filepath.Dir(valConfig[i].Value.(string)))
+
+				if valConfig[i].Option.Option != nil {
+					filters := valConfig[i].Option.Option.(map[string][]string)
+
+					for fname := range filters {
+
+						ff, err := gtk.FileFilterNew()
+
+						if err != nil {
+							log.Fatal("Unable to create file filter:", err)
+						}
+
+						ff.SetName(fname)
+
+						for g := 0; g < len(filters[fname]); g++ {
+							ff.AddPattern(filters[fname][g])
+						}
+
+						fcb.AddFilter(ff)
+					}
+
+				}
+
 				h.PackStart(fcb, false, true, 10)
 			}
 
