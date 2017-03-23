@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"regexp"
 	"path/filepath"
+//	"errors"
 )
 
 
@@ -54,9 +55,18 @@ const (
 	ConfigOptionFilePicker
 )
 
+const (
+	ConfigVerifierNone = 0
+	ConfigVerifierFileExists = 1
+	ConfigVerifierFileReadable = 2
+	ConfigVerifierFileExec = 4
+	ConfigVerifierFileCanBeNull = 8
+)
+
 type ConfigOption struct {
 	Flag uint
 	Option interface{}
+	Verification uint
 }
 
 type configVal struct {
@@ -78,89 +88,90 @@ var Notebook *gtk.Notebook = nil
 var notebookPages map[string]*gtk.Box
 var CurProfile map[string]*json.RawMessage
 var ProfileNames []string
+var alertProvider *gtk.CssProvider
 
 
 var extforwarder_config_data = []configVal {
-	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "dynamic", "Dynamic", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "multi", "Multi", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "ext_proto", "External Protocol", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "proto", "Protocol", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "addr", "Address", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "target_host", "Target Host", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "target_port", "Target Port", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "socket_owner", "Socket Owner", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
+	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "dynamic", "Dynamic", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "multi", "Multi", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "ext_proto", "External Protocol", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "proto", "Protocol", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "addr", "Address", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "target_host", "Target Host", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "target_port", "Target Port", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "socket_owner", "Socket Owner", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var whitelist_config_data = []configVal {
-	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
-	{ "target", "Target", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "read_only", "Read Only", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "can_create", "Can Create", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "ignore", "Ignore", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "force", "Force", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "no_follow", "No Follow", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "allow_suid", "Allow Setuid", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
+	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
+	{ "target", "Target", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "read_only", "Read Only", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "can_create", "Can Create", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "ignore", "Ignore", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "force", "Force", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "no_follow", "No Follow", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "allow_suid", "Allow Setuid", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var blacklist_config_data = []configVal {
-	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
-	{ "no_follow", "No Follow", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
+	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
+	{ "no_follow", "No Follow", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var envvar_config_data = []configVal {
-	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "value", "Value", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
+	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "value", "Value", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var general_config_template = []configVal {
-	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
-	{ "paths", "Paths", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil} },
-	{ "profile_path", "Profile Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }} },
-	{ "default_params", "Default Parameters", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil} },
-	{ "reject_user_args", "Reject User Arguments", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "auto_shutdown", "Auto Shutdown", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, ConfigOption{0, nil} },
-	{ "watchdog", "Watchdog", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil} },
-	{ "wrapper", "Wrapper", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
-	{ "multi", "One sandbox per instance", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "no_sys_proc", "Disable sandbox mounting of /sys and /proc", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "no_defaults", "Disable default directory mounts", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "allow_files", "Allow bind mounting of files as args inside the sandbox", DataTypeBool, false, nil, nil, ConfigOption{0, nil} },
-	{ "allowed_groups", "Allowed Groups", DataTypeStrArray, "", nil, nil, ConfigOption{0, nil} },
+	{ "name", "Name", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "path", "Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists} },
+	{ "paths", "Paths", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "profile_path", "Profile Path", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
+	{ "default_params", "Default Parameters", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "reject_user_args", "Reject User Arguments", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "auto_shutdown", "Auto Shutdown", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, ConfigOption{0, nil, 0} },
+	{ "watchdog", "Watchdog", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "wrapper", "Wrapper", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
+	{ "multi", "One sandbox per instance", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "no_sys_proc", "Disable sandbox mounting of /sys and /proc", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "no_defaults", "Disable default directory mounts", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "allow_files", "Allow bind mounting of files as args inside the sandbox", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "allowed_groups", "Allowed Groups", DataTypeStrArray, "", nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var X11_config_template = []configVal {
-	{ "enabled", "Enabled", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "tray_icon", "Tray Icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil} },
-	{ "window_icon", "Window Icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil} },
-	{ "enable_tray", "Enable Tray", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "enable_notifications", "Enable Notifications", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "disable_clipboard", "Disable Clipboard", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "audio_mode", "Audio Mode", DataTypeStrMulti, "none", nil, []interface{}{ "none", "speaker", "full", "pulseaudio"}, ConfigOption{0, nil} },
-	{ "pulseaudio", "Enable PulseAudio", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "border", "Border", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
+	{ "enabled", "Enabled", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "tray_icon", "Tray Icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0} },
+	{ "window_icon", "Window Icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0} },
+	{ "enable_tray", "Enable Tray", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "enable_notifications", "Enable Notifications", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "disable_clipboard", "Disable Clipboard", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "audio_mode", "Audio Mode", DataTypeStrMulti, "none", nil, []interface{}{ "none", "speaker", "full", "pulseaudio"}, ConfigOption{0, nil, 0} },
+	{ "pulseaudio", "Enable PulseAudio", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "border", "Border", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var network_config_template = []configVal {
-	{ "type", "Network Type", DataTypeStrMulti, "none", nil, []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil} },
-	{ "bridge", "Bridge", DataTypeString, "", nil, nil, ConfigOption{0, nil} },
-	{ "dns_mode", "DNS Mode", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, ConfigOption{0, nil} },
+	{ "type", "Network Type", DataTypeStrMulti, "none", nil, []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil, 0} },
+	{ "bridge", "Bridge", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "dns_mode", "DNS Mode", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, ConfigOption{0, nil, 0} },
 }
 
 var seccomp_config_template = []configVal {
-	{ "mode", "Mode", DataTypeStrMulti, "disabled", nil, []interface{}{ "train", "whitelist", "blacklist", "disabled" }, ConfigOption{0, nil} },
-	{ "enforce", "Enforce", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "debug", "Debug Mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "train", "Training Mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil} },
-	{ "train_output", "Training Data Output", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil} },
-	{ "whitelist", "seccomp Syscall Whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }} },
-	{ "blacklist", "seccomp Syscall Blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }} },
-	{ "extradefs", "Extra Definitions", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil} },
+	{ "mode", "Mode", DataTypeStrMulti, "disabled", nil, []interface{}{ "train", "whitelist", "blacklist", "disabled" }, ConfigOption{0, nil, 0} },
+	{ "enforce", "Enforce", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "debug", "Debug Mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "train", "Training Mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "train_output", "Training Data Output", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
+	{ "whitelist", "seccomp Syscall Whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
+	{ "blacklist", "seccomp Syscall Blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
+	{ "extradefs", "Extra Definitions", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var whitelist_config_template = []configVal {
-	{ "", "Whitelist Entry", DataTypeStructArray, nil, nil, nil, ConfigOption{0, nil} },
+	{ "", "Whitelist Entry", DataTypeStructArray, nil, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var allTabs = map[string]*[]configVal { "general": &general_config, "x11": &X11_config, "network": &network_config, "seccomp": &seccomp_config, "whitelist": &whitelist_config }
@@ -251,7 +262,29 @@ func loadPreferences() bool {
 	return true
 }
 
-func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) string {
+func setAlerted(widget *gtk.Entry) {
+
+	if alertProvider == nil {
+		var err error
+		alertProvider, err = gtk.CssProviderNew()
+
+		if err != nil {
+			log.Fatal("Unable to create CSS provider:", err)
+		}
+
+		alertProvider.LoadFromData("entry { background-color: #ffa500; }")
+	}
+
+	alertContext, err := widget.GetStyleContext()
+
+	if err != nil {
+		log.Fatal("Unable to create alert context:", err)
+	}
+
+	alertContext.AddProvider(alertProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+}
+
+func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) (string, error) {
 	result := "{\n"
 	first := true
 	padding := 0
@@ -303,6 +336,29 @@ func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) str
 				log.Fatal("Unable to get value from entry value: ", err)
 			}
 
+			if config[i].Option.Verification > 0 {
+			err = verifyConfig(config[i].Option.Verification, estr)
+
+			if err != nil {
+				rgb := gdk.NewRGBA()
+				rgb.Parse("#0000ff")
+				setAlerted(config[i].WidgetAssoc.(*gtk.Entry))
+//				config[i].WidgetAssoc.(*gtk.Entry).GrabFocus()
+				return "", err
+			} else {
+				ctx, err := config[i].WidgetAssoc.(*gtk.Entry).GetStyleContext()
+
+				if err != nil {
+					log.Fatal("Unable to get style context for widget:", err)
+				}
+
+				if alertProvider != nil {
+					ctx.RemoveProvider(alertProvider)
+				}
+
+			}
+}
+
 			result += "\"" + estr + "\""
 		} else if config[i].Type == DataTypeStrMulti {
 			ropts := config[i].WidgetAssoc.([]*gtk.RadioButton)
@@ -341,7 +397,7 @@ func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) str
 		result += "}\n"
 	}
 
-	return result
+	return result, nil
 }
 
 func get_radiobutton(group *gtk.RadioButton, label string, activated bool) *gtk.RadioButton {
@@ -471,7 +527,14 @@ func menu_Save() {
 	jstr := ""
 
 	for i := 0; i < len(allTabsOrdered); i++ {
-		jstr += serializeConfigToJSON(*allTabs[allTabsOrdered[i]], allTabsOrdered[i], 1)
+		jappend, err := serializeConfigToJSON(*allTabs[allTabsOrdered[i]], allTabsOrdered[i], 1)
+
+		if err != nil {
+			promptError(err.Error())
+			return
+		}
+
+		jstr += jappend
 	}
 
 	jstr += "}"
@@ -552,6 +615,40 @@ func createMenu(box*gtk.Box) {
 	}
 
 	box.PackStart(menuBar, false, false, 0)
+}
+
+func promptError(msg string) {
+        dialog := gtk.MessageDialogNew(mainWin, 0, gtk.MESSAGE_ERROR, gtk.BUTTONS_CLOSE, "Error: %s", msg)
+        dialog.Run()
+        dialog.Destroy()
+}
+
+func verifyConfig(vflags uint, param string) error {
+
+	if vflags == 0 {
+		return nil
+	}
+
+	if uint64(vflags) & ^uint64((ConfigVerifierFileExists | ConfigVerifierFileReadable | ConfigVerifierFileExec | ConfigVerifierFileCanBeNull)) > 0 {
+		fmt.Fprintf(os.Stderr, "Error: unrecognized verify configuration specified - %v\n", vflags)
+	}
+
+	if vflags & (ConfigVerifierFileExists | ConfigVerifierFileReadable | ConfigVerifierFileExec) > 0 {
+		fmt.Println("Attempting to verify: ", param)
+
+		if (vflags & ConfigVerifierFileCanBeNull == ConfigVerifierFileCanBeNull) && strings.TrimSpace(param) == "" {
+			return nil
+		}
+
+		_, err := os.Open(param)
+
+		if err != nil {
+			return err
+		}
+
+	}
+
+	return nil
 }
 
 func addRow(listStore *gtk.ListStore, name, data string) {
@@ -679,38 +776,8 @@ func setup_profiles_list(plist []string) *gtk.Box {
 	}
 
 	tv.Connect("row-activated", func() {
-		glib.IdleAdd(func() {
-			tv_click(tv, listStore)
-		})
+		tv_click(tv, listStore)
 	})
-
-/*	tv.Connect("row-activated", func() {
-		sel, err := tv.GetSelection()
-
-		if err == nil {
-			rows := sel.GetSelectedRows(listStore)
-
-			fmt.Println("RETURNED ROWS: ", rows.Length())
-			if rows.Length() > 0 {
-				rdata := rows.NthData(0)
-
-				lIndex, err := strconv.Atoi(rdata.(*gtk.TreePath).String())
-
-				if err == nil {
-					fmt.Println("LIST INDEX: ", lIndex)
-					fmt.Println("PROFILE BOX = ", profileBox)
-//					clear_container(profileBox)
-					profileBox.Add(get_label("123"))
-				//	populate_profile_container(allProfiles[lIndex], profileBox)
-				}
-
-				fmt.Println("DATAI: ", rdata.(*gtk.TreePath).String())
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Could not read profile selection:%v\n", err)
-		}
-
-	}) */
 
 	return box
 }
@@ -779,6 +846,7 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
 	for i := 0; i < len(valConfig); i++ {
 //fmt.Println("XXX: current one is: ", valConfig[i].Name)
 		h := get_hbox()
+		h.SetMarginTop(5)
 
 		if valConfig[i].Type == DataTypeString {
 			h.PackStart(get_label(valConfig[i].Description+":"), false, true, 10)
