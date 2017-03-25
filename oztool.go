@@ -1,6 +1,16 @@
 /*
  * Might require gtkAction implementation in order to support shortcuts in menu items:
  * http://www.kksou.com/php-gtk2/sample-codes/set-up-menu-using-GtkAction-Part-3-add-accelerators-with-labels.php
+ *
+ * Tooltips for tab labels
+ * Directory picker option
+ * Tooltips for radiobuttons
+ * Validation for string arrays (allow empty, valid file, etc)
+ * Proper JSON generation for array types
+ * Determine serialization behavior for values left to default
+ * Fix scrollbar behavior for main window
+ * Profile list requires proper columns
+ * Complex arrays: new, delete, select need to be implemented
  */
 
 package main
@@ -110,14 +120,14 @@ var extforwarder_config_template = []configVal {
 }
 
 var whitelist_config_template = []configVal {
-	{ "path", "Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
-	{ "target", "Target", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "read_only", "Read Only", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "can_create", "Can Create", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "ignore", "Ignore", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "path", "Path", "Path to be included in sandbox", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
+	{ "target", "Target", "Target path inside sandbox, if different", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "read_only", "Read Only", "Mount specified file as read-only", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "can_create", "Can Create", "Create the specified file in the sandbox if it doesn't already exist", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "ignore", "Ignore", "Ignore this file entry if it doesn't exist", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
 	{ "force", "Force", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "no_follow", "No Follow", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "allow_suid", "Allow Setuid", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "no_follow", "No Follow", "Do not follow symlinks in mounting process", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "allow_suid", "Allow Setuid", "Allow setuid files to be mounted in sandbox", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var blacklist_config_template = []configVal {
@@ -131,32 +141,32 @@ var envvar_config_template = []configVal {
 }
 
 var general_config_template = []configVal {
-	{ "name", "Name", "Profile Name", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "path", "Path", "Absolute path to application executable", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists} },
-	{ "paths", "Paths", "", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "name", "Name", "Application sandbox name", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "path", "Path", "Pathname to application executable", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists} },
+	{ "paths", "Paths", "Additional list of path to binaries matching this sandbox", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
 	{ "profile_path", "Profile Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
 	{ "default_params", "Default Parameters", "Default command line parameters to be passed to the application", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
 	{ "reject_user_args", "Reject User Arguments", "Discard any custom parameters passed to the application on the command line", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "auto_shutdown", "Auto Shutdown", "Automatically shutdown the oz sandbox after the application terminates", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, ConfigOption{0, nil, 0} },
-	{ "watchdog", "Watchdog", "", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "auto_shutdown", "Auto Shutdown", "Automatically close sandbox after the application terminates", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, ConfigOption{0, nil, 0} },
+	{ "watchdog", "Watchdog", "Name of watchdog process(es) e.g. 'python'", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
 	{ "wrapper", "Wrapper", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
-	{ "multi", "Multiple sandboxes per instance", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "multi", "Create separate sandboxes on each application launch", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
 	{ "no_sys_proc", "Disable sandbox mounting of /sys and /proc", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
 	{ "no_defaults", "Disable default directory mounts", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "allow_files", "Allow bind mounting of files as args inside the sandbox", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "allowed_groups", "Allowed Groups", "", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "allow_files", "Allow bind mounting of files as args inside the sandbox", "Command line arguments that are file paths will automatically be mounted into the sandboxed filesystem", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "allowed_groups", "Allowed Groups", "Additional names of groups whose gids the process will run under", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var X11_config_template = []configVal {
-	{ "enabled", "Enabled", "Allow application to use X11 display", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "tray_icon", "Tray Icon", "A pathname to an image file to be used as the application's tray icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0} },
+	{ "enabled", "Enabled", "Start X11 server inside sandbox", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "tray_icon", "Tray Icon", "A pathname to an image file to be used as the application's Xpra tray icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0} },
 	{ "window_icon", "Window Icon", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0} },
-	{ "enable_tray", "Enable Tray", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "enable_notifications", "Enable Notifications", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "disable_clipboard", "Disable Clipboard", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "enable_tray", "Enable Tray", "Enable Xpra utility tray for this application", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "enable_notifications", "Enable Notifications", "Allow notifications on host desktop", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "disable_clipboard", "Disable Clipboard", "Disable copying and pasting for this application", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
 	{ "audio_mode", "Audio Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "speaker", "full", "pulseaudio"}, ConfigOption{0, nil, 0} },
-	{ "pulseaudio", "Enable PulseAudio", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "border", "Border", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "pulseaudio", "Enable PulseAudio", "Use host audio", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "border", "Border", "Draw border around application", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 var network_config_template = []configVal {
@@ -166,14 +176,14 @@ var network_config_template = []configVal {
 }
 
 var seccomp_config_template = []configVal {
-	{ "mode", "Mode", "", DataTypeStrMulti, "disabled", nil, []interface{}{ "train", "whitelist", "blacklist", "disabled" }, ConfigOption{0, nil, 0} },
+	{ "mode", "Mode", "Enforcement mode", DataTypeStrMulti, "disabled", nil, []interface{}{ "train", "whitelist", "blacklist", "disabled" }, ConfigOption{0, nil, 0} },
 	{ "enforce", "Enforce", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "debug", "Debug Mode", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "train", "Training Mode", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "train_output", "Training Data Output", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
-	{ "whitelist", "seccomp Syscall Whitelist", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
-	{ "blacklist", "seccomp Syscall Blacklist", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
-	{ "extradefs", "Extra Definitions", "", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "debug", "Debug Mode", "Display full strace-style system call output (only when enforcement is set to false)", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "train", "Training Mode", "seccomp bpf training mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "train_output", "Training Data Output", "Path to generated training policy", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
+	{ "whitelist", "seccomp Syscall Whitelist", "Path to seccomp bpf whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
+	{ "blacklist", "seccomp Syscall Blacklist", "Path to seccomp bpf blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
+	{ "extradefs", "Extra Definitions", "seccomp bpf policy includes file, for adding variable definitions, macros etc.", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
 }
 
 /*var whitelist_config_template = []configVal {
@@ -652,6 +662,67 @@ func createMenu(box*gtk.Box) {
 	box.PackStart(menuBar, false, false, 0)
 }
 
+func editStrArray(input []string, fvalidate int) []string {
+        dialog := gtk.MessageDialogNew(mainWin, 0, gtk.MESSAGE_INFO, gtk.BUTTONS_OK_CANCEL, "Edit strings list:")
+
+        tv, err := gtk.TextViewNew()
+
+        if err != nil {
+                log.Fatal("Unable to create TextView:", err)
+        }
+
+        tvbuf, err := tv.GetBuffer()
+
+        if err != nil {
+                log.Fatal("Unable to get buffer:", err)
+        }
+
+	buftext := strings.Join(input, "\n")
+        tvbuf.SetText(buftext)
+        tv.SetEditable(true)
+        tv.SetWrapMode(gtk.WRAP_WORD)
+
+        scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
+
+        if err != nil {
+                log.Fatal("Unable to create scrolled window:", err)
+        }
+
+        scrollbox.Add(tv)
+        scrollbox.SetSizeRequest(500, 200)
+
+        box, err := dialog.GetContentArea()
+
+        if err != nil {
+                log.Fatal("Unable to get content area of dialog:", err)
+        }
+
+        box.Add(scrollbox)
+        dialog.ShowAll()
+        choice := dialog.Run()
+
+	bstr, err := tvbuf.GetText(tvbuf.GetStartIter(), tvbuf.GetEndIter(), false)
+
+	if err != nil {
+		log.Fatal("Unable to get buffer from text editor:", err)
+	}
+
+        dialog.Destroy()
+
+	if choice != int(gtk.RESPONSE_OK) {
+		return input
+	}
+
+	stra := strings.Split(bstr, "\n")
+
+	if len(stra) == 1 && stra[0] == "" {
+		return []string{}
+	}
+
+	return stra
+}
+
+
 func promptError(msg string) {
         dialog := gtk.MessageDialogNew(mainWin, 0, gtk.MESSAGE_ERROR, gtk.BUTTONS_CLOSE, "Error: %s", msg)
         dialog.Run()
@@ -896,6 +967,24 @@ func get_button(label string) *gtk.Button {
 	return button
 }
 
+func get_narrow_button(label string) *gtk.Button {
+	button, err := gtk.ButtonNewWithLabel(label)
+
+	if err != nil {
+		log.Fatal("Unable to create new button:", err)
+	}
+
+/*	allocation := button.GetAllocation()
+	w, h := allocation.GetWidth(), allocation.GetHeight()
+
+
+	w -=20
+	h -= 20
+	button.SetSizeRequest(w, h) */
+
+	return button
+}
+
 func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal) {
 	ctrlbox := get_hbox()
 	ctrlbox.SetMarginTop(10)
@@ -1054,13 +1143,29 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 			valConfig[i].WidgetAssoc = radios
 		} else if valConfig[i].Type == DataTypeStrArray {
 			h.PackStart(get_label(valConfig[i].Label+":"), false, true, 10)
+			ebutton := get_narrow_button("Edit")
+			ebutton.SetTooltipText(valConfig[i].Description)
+			h.PackStart(ebutton, false, true, 0)
 
-			if valConfig[i].Value != nil && len(valConfig[i].Value.([]string)) == 0 {
-				h.PackStart(get_label("[empty] [Unsupported]"), false, true, 10)
-			} else {
-				h.PackStart(get_label("[Unsupported]"), false, true, 10)
+			saved_i := i
+			this_label := get_label("[empty]")
+			this_label.SetTooltipText(valConfig[i].Description)
+			ebutton.Connect("clicked", func() {
+				valConfig[saved_i].Value = editStrArray(valConfig[saved_i].Value.([]string), 0)
+
+				if len(valConfig[saved_i].Value.([]string)) == 0 {
+					this_label.SetText("[empty]")
+				} else {
+					this_label.SetText(strings.Join(valConfig[saved_i].Value.([]string), "\n"))
+				}
+
+			})
+
+			if valConfig[i].Value != nil && len(valConfig[i].Value.([]string)) != 0 {
+				this_label.SetText(strings.Join(valConfig[i].Value.([]string), "\n"))
 			}
 
+			h.PackStart(this_label, false, true, 10)
 		} else if valConfig[i].Type == DataTypeStructArray {
 			fmt.Println("!!!! struct array")
 			fmt.Println("typeof = ", reflect.TypeOf(valConfig[i].Value))
@@ -1182,6 +1287,15 @@ func populateValues(config []configVal, jdata map[string]*json.RawMessage) []con
 
 			config[c].Value = sval
 			fmt.Println("--- deserialized string/multi = ", sval)
+		} else if config[c].Type == DataTypeStrArray {
+			sval := []string{}
+			err := json.Unmarshal(*jdata[jname], &sval)
+
+			if err != nil {
+				fmt.Println("Error reading in JSON data as string array:", err)
+			}
+
+			config[c].Value = sval
 		} else if config[c].Type == DataTypeStructArray {
 			fmt.Println("\n\n\n\nUNSUPPORTEDMULTI!!")
 		} else {
@@ -1457,8 +1571,6 @@ func main() {
 			notebookPages[tname].Add(scrollbox)
 			continue
 		}
-
-		fmt.Println("NEXT")
 
 		populate_profile_tab(tbox, *allTabs[tname], false)
 		notebookPages[tname].Add(tbox)
