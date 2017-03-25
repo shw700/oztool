@@ -859,23 +859,58 @@ func str_in_array(needle string, haystack[]string, nocase bool) bool {
     return false
 }
 
+func get_button(label string) *gtk.Button {
+	button, err := gtk.ButtonNewWithLabel(label)
+
+	if err != nil {
+		log.Fatal("Unable to create new button:", err)
+	}
+
+	return button
+}
+
 func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal) {
+	ctrlbox := get_hbox()
+	ctrlbox.SetMarginTop(10)
+	b := get_button("New")
+	ctrlbox.PackStart(b, false, true, 5)
+	b = get_button("Delete")
+	ctrlbox.PackStart(b, false, true, 5)
+	container.Add(ctrlbox)
 
 	for i := 0; i < len(valConfigs); i++ {
-		h := get_vbox()
-		h.SetMarginTop(5)
-		populate_profile_tab(h, valConfigs[i])
-		container.PackStart(h, false, true, 10)
+		frame, err := gtk.FrameNew("")
+
+		if err != nil {
+			log.Fatal("Unable to create new frame:", err)
+		}
+
+		frame.SetBorderWidth(8)
+		frame.SetShadowType(gtk.SHADOW_ETCHED_IN)
+
+		v := get_vbox()
+		v.SetMarginTop(10)
+		v.SetMarginBottom(10)
+		h := get_hbox()
+		sbutton := get_button("Select")
+		sbutton.SetMarginStart(5)
+		h.Add(sbutton)
+		v.Add(h)
+		populate_profile_tab(v, valConfigs[i], true)
+		frame.Add(v)
+		container.PackStart(frame, false, true, 10)
 	}
 
 }
 
-func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
+func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool) {
+	var last_hbox *gtk.Box = nil
 
 	for i := 0; i < len(valConfig); i++ {
 //fmt.Println("XXX: current one is: ", valConfig[i].Name)
 		h := get_hbox()
 		h.SetMarginTop(5)
+		container.Add(h)
 
 		if valConfig[i].Type == DataTypeString {
 			h.PackStart(get_label(valConfig[i].Description+":"), false, true, 10)
@@ -941,9 +976,25 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
 			}
 
 		} else if valConfig[i].Type == DataTypeBool {
-			wcheck := get_checkbox(valConfig[i].Description, valConfig[i].Value.(bool))
-			valConfig[i].WidgetAssoc = wcheck
-			h.PackStart(wcheck, false, true, 10)
+
+			if tight {
+				wcheck := get_checkbox(valConfig[i].Description, valConfig[i].Value.(bool))
+				valConfig[i].WidgetAssoc = wcheck
+
+				if (i > 0) && (valConfig[i-1].Type == DataTypeBool) && (last_hbox != nil) {
+					fmt.Println("last_hval = ", last_hbox)
+					h.Destroy()
+					last_hbox.PackStart(wcheck, false, true, 10)
+					continue
+				} else {
+					h.PackStart(wcheck, false, true, 10)
+				}
+			} else {
+				wcheck := get_checkbox(valConfig[i].Description, valConfig[i].Value.(bool))
+				valConfig[i].WidgetAssoc = wcheck
+				h.PackStart(wcheck, false, true, 10)
+			}
+
 		} else if valConfig[i].Type == DataTypeStrMulti {
 			radios := make([]*gtk.RadioButton, 0)
 			sval := valConfig[i].Value.(string)
@@ -970,7 +1021,7 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal) {
 			fmt.Println("***** UNSUPPORTED -> " + valConfig[i].Name + " / " + valConfig[i].Description)
 		}
 
-		container.Add(h)
+		last_hbox = h
 	}
 
 }
@@ -1108,6 +1159,7 @@ func reset_configs() {
 	copy(network_config, network_config_template)
 	copy(seccomp_config, seccomp_config_template)
 	copy(whitelist_config, whitelist_config_template)
+	copy(blacklist_config, blacklist_config_template)
 	copy(environment_config, envvar_config_template)
 }
 
@@ -1183,7 +1235,7 @@ func showProfileByPath(path string) {
 			log.Fatal("Unable to create box:", err)
 		}
 
-		populate_profile_tab(tbox, *allTabs[tname])
+		populate_profile_tab(tbox, *allTabs[tname], false)
 		notebookPages[tname].Add(tbox)
 	}
 
@@ -1345,7 +1397,7 @@ func main() {
 
 		fmt.Println("NEXT")
 
-		populate_profile_tab(tbox, *allTabs[tname])
+		populate_profile_tab(tbox, *allTabs[tname], false)
 		notebookPages[tname].Add(tbox)
 	}
 
