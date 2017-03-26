@@ -204,6 +204,9 @@ var allTabsA = map[string]*[][]configVal { "whitelist": nil, "blacklist": nil, "
 
 var allTabsOrdered = []string{ "general", "x11", "network", "whitelist", "blacklist", "seccomp", "environment", "forwarders" }
 
+var templates = map[string][]configVal { "whitelist": whitelist_config_template, "blacklist": blacklist_config_template, "environment": envvar_config_template }
+
+
 var allTabInfo = map[string]settingsTab {
 	"general": { "", "General", "General application settings" },
 	"x11": { "xserver", "X11", "X11 settings" },
@@ -995,17 +998,6 @@ func setup_profiles_list(plist []string) *gtk.Box {
 	return box
 }
 
-func get_bold_texttag() *gtk.TextTag {
-	boldTT, err := gtk.TextTagNew("bold")
-
-	if err != nil {
-		log.Fatal("Unable to create text tag for boldface:", err)
-	}
-
-	boldTT.SetProperty("weight", pango.WEIGHT_ULTRABOLD)
-	return boldTT
-}
-
 func clear_container(container *gtk.Box, descend bool) {
 	children := container.GetChildren()
 	fmt.Println("RETURNED CHILDREN: ", children.Length())
@@ -1102,14 +1094,27 @@ func get_narrow_button(label string) *gtk.Button {
 	return button
 }
 
-func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal) {
+func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, template *[]configVal) {
 	ctrlbox := get_hbox()
 	ctrlbox.SetMarginTop(10)
-	b := get_button("New")
-	ctrlbox.PackStart(b, false, true, 5)
-	b = get_button("Delete")
-	ctrlbox.PackStart(b, false, true, 5)
-	container.Add(ctrlbox)
+
+	if template != nil {
+		b := get_button("New")
+
+		b.Connect("clicked", func() {
+			fmt.Println("NEWWWW")
+			new_entry := make([]configVal, len(*template))
+			copy(new_entry, *template)
+			new_entryA := [][]configVal{ new_entry }
+			populate_profile_tabA(container, new_entryA, nil)
+			container.ShowAll()
+		})
+
+		ctrlbox.PackStart(b, false, true, 5)
+		b = get_button("Delete")
+		ctrlbox.PackStart(b, false, true, 5)
+		container.Add(ctrlbox)
+	}
 
 	for i := 0; i < len(valConfigs); i++ {
 		frame, err := gtk.FrameNew("")
@@ -1699,7 +1704,8 @@ func main() {
 		if _, failed := allTabsA[tname]; failed {
 			scrollbox := get_scrollbox()
 			scrollbox.SetSizeRequest(600, 500)
-			populate_profile_tabA(tbox, *allTabsA[tname])
+			tmp := templates[tname]
+			populate_profile_tabA(tbox, *allTabsA[tname], &tmp)
 			scrollbox.Add(tbox)
 			notebookPages[tname].Add(scrollbox)
 			continue
