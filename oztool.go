@@ -4,10 +4,9 @@
  *
  * Validation for string arrays (allow empty, valid file, etc)
  * Determine serialization behavior for values left to default
- * Fix scrollbar behavior for main window
- * Profile list requires proper columns
  * Complex arrays: new, delete, select need to be implemented
  * Loading of tab contents requires a single code path, not two duplicate ones
+ * Image file choosing should reload icon preview
  *
  * Directory picker option
  */
@@ -774,12 +773,7 @@ func editStrArray(input []string, fvalidate int) []string {
         tv.SetEditable(true)
         tv.SetWrapMode(gtk.WRAP_WORD)
 
-        scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
-
-        if err != nil {
-                log.Fatal("Unable to create scrolled window:", err)
-        }
-
+        scrollbox := get_scrollbox()
         scrollbox.Add(tv)
         scrollbox.SetSizeRequest(500, 200)
 
@@ -849,16 +843,17 @@ func verifyConfig(vflags uint, param string) error {
 	return nil
 }
 
-func addRow(listStore *gtk.ListStore, name, data string) {
+func addRow(listStore *gtk.ListStore, name, data, path string) {
 	iter := listStore.Append()
 
-	colVals := make([]interface{}, 2)
-	colVals[0] = name
+	colVals := make([]interface{}, 3)
+	colVals[0] = path
 	colVals[1] = data
+	colVals[2] = name
 
-	colNums := make([]int, 2)
+	colNums := make([]int, 3)
 
-	for n := 0; n < 2; n++ {
+	for n := 0; n < 3; n++ {
 		colNums[n] = n
 	}
 
@@ -938,14 +933,9 @@ func setup_profiles_list(plist []string) *gtk.Box {
 		log.Fatal("Unable to create settings box:", err)
 	}
 
-	scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
-
-	if err != nil {
-		log.Fatal("Unable to create settings scrolled window:", err)
-	}
-
+	scrollbox := get_scrollbox()
 	box.Add(scrollbox)
-	scrollbox.SetSizeRequest(500, 200)
+	scrollbox.SetSizeRequest(650, 200)
 
 	tv, err := gtk.TreeViewNew()
 
@@ -961,8 +951,20 @@ func setup_profiles_list(plist []string) *gtk.Box {
 		sel.SetMode(gtk.SELECTION_SINGLE)
 	}
 
-	tv.AppendColumn(createColumn("Name", 0))
-	tv.AppendColumn(createColumn("Description", 1))
+	tv.SetHeadersClickable(true)
+
+	col1 := createColumn("App Path", 0)
+	col2 := createColumn("Description", 1)
+	col3 := createColumn("Profile Path", 2)
+	col1.SetResizable(true)
+	col2.SetResizable(true)
+	col3.SetResizable(true)
+	col1.SetSortColumnID(0)
+	col2.SetSortColumnID(1)
+	col3.SetSortColumnID(2)
+	tv.AppendColumn(col1)
+	tv.AppendColumn(col2)
+	tv.AppendColumn(col3)
 
 	listStore := createListStore(2)
 	globalLS = listStore
@@ -970,7 +972,20 @@ func setup_profiles_list(plist []string) *gtk.Box {
 	tv.SetModel(listStore)
 
 	for n := 0; n < len(plist); n++ {
-		addRow(listStore, plist[n], "XXX")
+		pname, ppath := "---", "---"
+		prof, err := loadProfileFile(plist[n])
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading profile data:", err)
+		} else {
+			tmp_config := make([]configVal, len(general_config_template))
+			copy(tmp_config, general_config_template)
+			tmp_config = populateValues(tmp_config, prof)
+			pname = tmp_config[0].Value.(string)
+			ppath = tmp_config[1].Value.(string)
+		}
+
+		addRow(listStore, plist[n], pname, ppath)
 	}
 
 	tv.Connect("row-activated", func() {
@@ -1022,6 +1037,16 @@ func get_vbox() *gtk.Box {
 	}
 
 	return vbox
+}
+
+func get_scrollbox() *gtk.ScrolledWindow {
+	scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
+
+	if err != nil {
+		log.Fatal("Unable to create scrolled window:", err)
+	}
+
+	return scrollbox
 }
 
 func get_hbox() *gtk.Box {
@@ -1556,8 +1581,6 @@ func main() {
 		fmt.Println("XXXXXXXXXXXXXXXXXX: error")
 	}
 
-	fmt.Println("seccomp: ", reflect.TypeOf(CurProfile["seccomp"]))
-
 	jseccomp := getChildAsRM(CurProfile, "seccomp")
 
 	if jseccomp == nil {
@@ -1649,14 +1672,10 @@ func main() {
 		log.Fatal("Unable to create box:", err)
 	}
 
-	scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
-
-	if err != nil {
-		log.Fatal("Unable to create scrolled window:", err)
-	}
-
-	mainWin.Add(scrollbox)
-	scrollbox.Add(box)
+//	scrollbox := get_scrollbox()
+//	mainWin.Add(scrollbox)
+//	scrollbox.Add(box)
+	mainWin.Add(box)
 
 	pbox := setup_profiles_list(ProfileNames)
 	profileBox = box
@@ -1678,12 +1697,7 @@ func main() {
 		}
 
 		if _, failed := allTabsA[tname]; failed {
-			scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
-
-			if err != nil {
-				log.Fatal("Unable to create new scrollbox:", err)
-			}
-
+			scrollbox := get_scrollbox()
 			scrollbox.SetSizeRequest(600, 500)
 			populate_profile_tabA(tbox, *allTabsA[tname])
 			scrollbox.Add(tbox)
