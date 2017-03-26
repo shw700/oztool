@@ -2,15 +2,15 @@
  * Might require gtkAction implementation in order to support shortcuts in menu items:
  * http://www.kksou.com/php-gtk2/sample-codes/set-up-menu-using-GtkAction-Part-3-add-accelerators-with-labels.php
  *
- * Tooltips for tab labels
- * Directory picker option
  * Tooltips for radiobuttons
  * Validation for string arrays (allow empty, valid file, etc)
- * Proper JSON generation for array types
  * Determine serialization behavior for values left to default
  * Fix scrollbar behavior for main window
  * Profile list requires proper columns
  * Complex arrays: new, delete, select need to be implemented
+ * Loading of tab contents requires a single code path, not two duplicate ones
+ *
+ * Directory picker option
  */
 
 package main
@@ -68,6 +68,7 @@ const (
 	ConfigOptionNone = iota
 	ConfigOptionImage
 	ConfigOptionFilePicker
+	ConfigOptionDirPicker
 )
 
 const (
@@ -93,6 +94,12 @@ type configVal struct {
 	WidgetAssoc interface{}
 	Possibilities []interface{}
 	Option ConfigOption
+}
+
+type settingsTab struct {
+	JName string
+	TabName string
+	Tooltip string
 }
 
 
@@ -194,6 +201,17 @@ var allTabs = map[string]*[]configVal { "general": &general_config, "x11": &X11_
 var allTabsA = map[string]*[][]configVal { "whitelist": nil, "blacklist": nil, "environment": nil, "forwarders": nil }
 
 var allTabsOrdered = []string{ "general", "x11", "network", "whitelist", "blacklist", "seccomp", "environment", "forwarders" }
+
+var allTabInfo = map[string]settingsTab {
+	"general": { "", "General", "General application settings" },
+	"x11": { "xserver", "X11", "X11 settings" },
+	"network": { "networking", "Network", "Network settings" },
+	"whitelist": { "whitelist", "Whitelist", "Host filesystem paths mounted into sandbox" },
+	"blacklist": { "blacklist", "Blacklist", "Restricted paths from host filesystem" },
+	"seccomp": { "seccomp", "seccomp", "System call filtering rules" },
+	"environment": { "environment", "Environment", "Application-specific environment variables" },
+	"forwarders": { "forwarders", "Forwarders", "Connection listeners forwarding into sandbox" },
+}
 
 
 var file_menu = []menuVal {
@@ -304,13 +322,21 @@ func setAlerted(widget *gtk.Entry) {
 	alertContext.AddProvider(alertProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 }
 
-func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) (string, error) {
-	result := "{\n"
+func serializeConfigToJSON(config []configVal, secname string, fmtlevel int, inner bool) (string, error) {
+	result := ""
 	first := true
 	padding := 0
 
-	if secname != "general" {
+	if inner {
+		result += ""
+	} else {
+		result += "{\n"
+	}
+
+	if !inner && secname != "general" {
 		result = ", \"" + secname + "\": {\n"
+	} else if inner {
+		result += "     {"
 	}
 
 	if fmtlevel > 0 {
@@ -325,14 +351,21 @@ func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) (st
 
 	for i := 0; i < len(config); i++ {
 
-		if secname == "general" {
-			result += " "
-		} else {
-			result += "     "
+		if !inner {
+			if secname == "general" {
+				result += " "
+			} else {
+				result += "     "
+			}
 		}
 
 		if !first {
 			result += ","
+
+			if inner {
+				result += " "
+			}
+
 		} else {
 			first = false
 			result += " "
@@ -403,18 +436,43 @@ func serializeConfigToJSON(config []configVal, secname string, fmtlevel int) (st
 		} else if config[i].Type == DataTypeInt || config[i].Type == DataTypeUInt {
 			result += fmt.Sprintf("%v", config[i].Value)
 		} else if config[i].Type == DataTypeStrArray {
-			result += "[]"
+			stra := config[i].Value.([]string)
+
+			if len(stra) == 0 {
+				result += "[]"
+			} else {
+				result += "[ "
+
+				for s := 0; s < len(stra); s++ {
+					result += "\"" + stra[s] + "\""
+
+					if s < len(stra)-1 {
+						result += ", "
+					}
+
+				}
+
+				result += " ]"
+			}
+
 		} else {
 			result += "\"unsupported\""
 		}
 
-		result += "\n"
+		if !inner {
+			result += "\n"
+		}
+
 	}
 
-	if secname == "general" {
+	if !inner && secname == "general" {
 		result += "\n"
 	} else {
-		result += "}\n"
+		if inner {
+			result += " }"
+		} else {
+			result += "}\n"
+		}
 	}
 
 	return result, nil
@@ -465,6 +523,18 @@ func get_entry(text string) *gtk.Entry {
 	return entry
 }
 
+func get_label_tt(text, tooltip string) *gtk.Label {
+	label, err := gtk.LabelNew(text)
+
+	if err != nil {
+		log.Fatal("Unable to create label in GUI:", err)
+		return nil
+	}
+
+	label.SetTooltipText(tooltip)
+	return label
+}
+
 func get_label(text string) *gtk.Label {
 	label, err := gtk.LabelNew(text)
 
@@ -478,9 +548,7 @@ func get_label(text string) *gtk.Label {
 
 func fillNotebookPages(notebook *gtk.Notebook) {
 
-	var pages = []string{ "General", "Whitelist", "Blacklist", "X11", "Environment", "Network", "seccomp", "Forwarders" }
-
-	for n := range pages {
+	for n := 0; n < len(allTabsOrdered); n++ {
 
 		box, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
 
@@ -488,8 +556,8 @@ func fillNotebookPages(notebook *gtk.Notebook) {
                         log.Fatal("Unable to create notebook page:", err)
                 }
 
-		notebook.AppendPage(box, get_label(pages[n]))
-		notebookPages[strings.ToLower(pages[n])] = box
+		notebook.AppendPage(box, get_label_tt(allTabInfo[allTabsOrdered[n]].TabName, allTabInfo[allTabsOrdered[n]].Tooltip))
+		notebookPages[allTabsOrdered[n]] = box
 	}
 
 }
@@ -551,13 +619,38 @@ func menu_Save() {
 	jstr := ""
 
 	for i := 0; i < len(allTabsOrdered); i++ {
+		tname := allTabsOrdered[i]
 
-		if _, failed := allTabsA[allTabsOrdered[i]]; failed {
-			fmt.Println("Skipping over export of unsupported section: ", allTabsOrdered[i])
+		if _, failed := allTabsA[tname]; failed {
+			fmt.Println("Trying export of unsupported section: ", tname)
+			jstr += ", \"" + tname + "\": [\n"
+
+			if len(*allTabsA[tname]) == 0 {
+				jstr += "]\n"
+				continue
+			}
+
+			for j := 0; j < len(*allTabsA[tname]); j++ {
+				jappend, err := serializeConfigToJSON((*allTabsA[tname])[j], tname, 0, true)
+
+				if err != nil {
+					promptError(err.Error())
+					return
+				}
+
+				jstr += jappend
+
+				if j < len(*allTabsA[tname])-1 {
+					jstr += ",\n"
+				}
+
+			}
+
+			jstr += "]\n"
 			continue
 		}
 
-		jappend, err := serializeConfigToJSON(*allTabs[allTabsOrdered[i]], allTabsOrdered[i], 1)
+		jappend, err := serializeConfigToJSON(*allTabs[tname], tname, 1, false)
 
 		if err != nil {
 			promptError(err.Error())
@@ -575,10 +668,6 @@ func menu_Save() {
 func menu_Quit() {
 	fmt.Println("Quitting on user instruction.")
 	gtk.MainQuit()
-}
-
-func accelDispatch() {
-	fmt.Println("ACCELERATOR!!!")
 }
 
 func createMenu(box*gtk.Box) {
@@ -1057,8 +1146,14 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 
 				}
 
-			} else if valConfig[i].Option.Flag == ConfigOptionFilePicker {
-				fcb, err := gtk.FileChooserButtonNew("Select a file", gtk.FILE_CHOOSER_ACTION_OPEN)
+			} else if valConfig[i].Option.Flag == ConfigOptionFilePicker || valConfig[i].Option.Flag == ConfigOptionDirPicker {
+				cflag := gtk.FILE_CHOOSER_ACTION_OPEN
+
+				if valConfig[i].Option.Flag == ConfigOptionDirPicker {
+					cflag = gtk.FILE_CHOOSER_ACTION_SELECT_FOLDER
+				}
+
+				fcb, err := gtk.FileChooserButtonNew("Select a file", cflag)
 
 				if err != nil {
 					log.Fatal("Unable to create file choose button:", err)
@@ -1071,7 +1166,7 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 				fcb.SetCurrentName(valConfig[i].Value.(string))
 				fcb.SetCurrentFolder(filepath.Dir(valConfig[i].Value.(string)))
 
-				if valConfig[i].Option.Option != nil {
+				if cflag == gtk.FILE_CHOOSER_ACTION_OPEN && valConfig[i].Option.Option != nil {
 					filters := valConfig[i].Option.Option.(map[string][]string)
 
 					for fname := range filters {
@@ -1527,8 +1622,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Unable to create box:", err)
 	}
-
-	fmt.Println("profile box = ", profileBox)
 
 	scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
 
