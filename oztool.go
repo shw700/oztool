@@ -2,7 +2,6 @@
  * Might require gtkAction implementation in order to support shortcuts in menu items:
  * http://www.kksou.com/php-gtk2/sample-codes/set-up-menu-using-GtkAction-Part-3-add-accelerators-with-labels.php
  *
- * Tooltips for radiobuttons
  * Validation for string arrays (allow empty, valid file, etc)
  * Determine serialization behavior for values left to default
  * Fix scrollbar behavior for main window
@@ -77,12 +76,14 @@ const (
 	ConfigVerifierFileReadable = 2
 	ConfigVerifierFileExec = 4
 	ConfigVerifierFileCanBeNull = 8
+	ConfigVerifierArrayNoBlank = 16
 )
 
 type ConfigOption struct {
 	Flag uint
 	Option interface{}
 	Verification uint
+	Tooltips interface{}
 }
 
 type configVal struct {
@@ -113,88 +114,90 @@ var CurProfile map[string]*json.RawMessage
 var ProfileNames []string
 var alertProvider *gtk.CssProvider
 
+var configOptNone ConfigOption = ConfigOption{ 0, nil, 0, nil }
+
 
 var extforwarder_config_template = []configVal {
-	{ "name", "Name", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "dynamic", "Dynamic", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "multi", "Multi", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "ext_proto", "External Protocol", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "proto", "Protocol", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "addr", "Address", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "target_host", "Target Host", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "target_port", "Target Port", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "socket_owner", "Socket Owner", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "name", "Name", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "dynamic", "Dynamic", "", DataTypeBool, false, nil, nil, configOptNone },
+	{ "multi", "Multi", "", DataTypeBool, false, nil, nil, configOptNone },
+	{ "ext_proto", "External Protocol", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "proto", "Protocol", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "addr", "Address", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "target_host", "Target Host", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "target_port", "Target Port", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "socket_owner", "Socket Owner", "", DataTypeString, "", nil, nil, configOptNone },
 }
 
 var whitelist_config_template = []configVal {
-	{ "path", "Path", "Path to be included in sandbox", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
-	{ "target", "Target", "Target path inside sandbox, if different", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "read_only", "Read Only", "Mount specified file as read-only", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "can_create", "Can Create", "Create the specified file in the sandbox if it doesn't already exist", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "ignore", "Ignore", "Ignore this file entry if it doesn't exist", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "force", "Force", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "no_follow", "No Follow", "Do not follow symlinks in mounting process", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "allow_suid", "Allow Setuid", "Allow setuid files to be mounted in sandbox", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
+	{ "path", "Path", "Path to be included in sandbox", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil} },
+	{ "target", "Target", "Target path inside sandbox, if different", DataTypeString, "", nil, nil, configOptNone },
+	{ "read_only", "Read Only", "Mount specified file as read-only", DataTypeBool, true, nil, nil, configOptNone },
+	{ "can_create", "Can Create", "Create the specified file in the sandbox if it doesn't already exist", DataTypeBool, false, nil, nil, configOptNone },
+	{ "ignore", "Ignore", "Ignore this file entry if it doesn't exist", DataTypeBool, false, nil, nil, configOptNone },
+	{ "force", "Force", "", DataTypeBool, false, nil, nil, configOptNone },
+	{ "no_follow", "No Follow", "Do not follow symlinks in mounting process", DataTypeBool, true, nil, nil, configOptNone },
+	{ "allow_suid", "Allow Setuid", "Allow setuid files to be mounted in sandbox", DataTypeBool, false, nil, nil, configOptNone },
 }
 
 var blacklist_config_template = []configVal {
-	{ "path", "Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
-	{ "no_follow", "No Follow", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "path", "Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil} },
+	{ "no_follow", "No Follow", "", DataTypeBool, true, nil, nil, configOptNone },
 }
 
 var envvar_config_template = []configVal {
-	{ "name", "Name", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "value", "Value", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
+	{ "name", "Name", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "value", "Value", "", DataTypeString, "", nil, nil, configOptNone },
 }
 
 var general_config_template = []configVal {
-	{ "name", "Name", "Application sandbox name", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "path", "Path", "Pathname to application executable", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists} },
-	{ "paths", "Paths", "Additional list of path to binaries matching this sandbox", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
-	{ "profile_path", "Profile Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
-	{ "default_params", "Default Parameters", "Default command line parameters to be passed to the application", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
-	{ "reject_user_args", "Reject User Arguments", "Discard any custom parameters passed to the application on the command line", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "auto_shutdown", "Auto Shutdown", "Automatically close sandbox after the application terminates", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, ConfigOption{0, nil, 0} },
-	{ "watchdog", "Watchdog", "Name of watchdog process(es) e.g. 'python'", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
-	{ "wrapper", "Wrapper", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
-	{ "multi", "Create separate sandboxes on each application launch", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "no_sys_proc", "Disable sandbox mounting of /sys and /proc", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "no_defaults", "Disable default directory mounts", "", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "allow_files", "Allow bind mounting of files as args inside the sandbox", "Command line arguments that are file paths will automatically be mounted into the sandboxed filesystem", DataTypeBool, false, nil, nil, ConfigOption{0, nil, 0} },
-	{ "allowed_groups", "Allowed Groups", "Additional names of groups whose gids the process will run under", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "name", "Name", "Application sandbox name", DataTypeString, "", nil, nil, configOptNone },
+	{ "path", "Path", "Pathname to application executable", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil} },
+	{ "paths", "Paths", "Additional list of path to binaries matching this sandbox", DataTypeStrArray, []string{}, nil, nil, configOptNone },
+	{ "profile_path", "Profile Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
+	{ "default_params", "Default Parameters", "Default command line parameters to be passed to the application", DataTypeStrArray, []string{}, nil, nil, configOptNone },
+	{ "reject_user_args", "Reject User Arguments", "Discard any custom parameters passed to the application on the command line", DataTypeBool, false, nil, nil, configOptNone },
+	{ "auto_shutdown", "Auto Shutdown", "Automatically close sandbox after the application terminates", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, configOptNone },
+	{ "watchdog", "Watchdog", "Name of watchdog process(es) e.g. 'python'", DataTypeStrArray, []string{}, nil, nil, configOptNone },
+	{ "wrapper", "Wrapper", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
+	{ "multi", "Create separate sandboxes on each application launch", "", DataTypeBool, false, nil, nil, configOptNone },
+	{ "no_sys_proc", "Disable sandbox mounting of /sys and /proc", "", DataTypeBool, false, nil, nil, configOptNone },
+	{ "no_defaults", "Disable default directory mounts", "", DataTypeBool, false, nil, nil, configOptNone },
+	{ "allow_files", "Allow bind mounting of files as args inside the sandbox", "Command line arguments that are file paths will automatically be mounted into the sandboxed filesystem", DataTypeBool, false, nil, nil, configOptNone },
+	{ "allowed_groups", "Allowed Groups", "Additional names of groups whose gids the process will run under", DataTypeStrArray, []string{}, nil, nil, configOptNone },
 }
 
 var X11_config_template = []configVal {
-	{ "enabled", "Enabled", "Start X11 server inside sandbox", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "tray_icon", "Tray Icon", "A pathname to an image file to be used as the application's Xpra tray icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0} },
-	{ "window_icon", "Window Icon", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0} },
-	{ "enable_tray", "Enable Tray", "Enable Xpra utility tray for this application", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "enable_notifications", "Enable Notifications", "Allow notifications on host desktop", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "disable_clipboard", "Disable Clipboard", "Disable copying and pasting for this application", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "audio_mode", "Audio Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "speaker", "full", "pulseaudio"}, ConfigOption{0, nil, 0} },
-	{ "pulseaudio", "Enable PulseAudio", "Use host audio", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "border", "Border", "Draw border around application", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
+	{ "enabled", "Enabled", "Start X11 server inside sandbox", DataTypeBool, true, nil, nil, configOptNone },
+	{ "tray_icon", "Tray Icon", "A pathname to an image file to be used as the application's Xpra tray icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0, nil} },
+	{ "window_icon", "Window Icon", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0, nil} },
+	{ "enable_tray", "Enable Tray", "Enable Xpra utility tray for this application", DataTypeBool, true, nil, nil, configOptNone },
+	{ "enable_notifications", "Enable Notifications", "Allow notifications on host desktop", DataTypeBool, true, nil, nil, configOptNone },
+	{ "disable_clipboard", "Disable Clipboard", "Disable copying and pasting for this application", DataTypeBool, true, nil, nil, configOptNone },
+	{ "audio_mode", "Audio Mode", "Audio settings", DataTypeStrMulti, "none", nil, []interface{}{ "none", "speaker", "full", "pulseaudio"}, ConfigOption{0, nil, 0, []string{ "No audio support", "Speaker support only", "Full audio support", "Pass Pulseaudio socket through to sandbox" } } },
+	{ "pulseaudio", "Enable PulseAudio", "Use host audio", DataTypeBool, true, nil, nil, configOptNone },
+	{ "border", "Border", "Draw border around application", DataTypeBool, true, nil, nil, configOptNone },
 }
 
 var network_config_template = []configVal {
-	{ "type", "Network Type", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil, 0} },
-	{ "bridge", "Bridge", "", DataTypeString, "", nil, nil, ConfigOption{0, nil, 0} },
-	{ "dns_mode", "DNS Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, ConfigOption{0, nil, 0} },
+	{ "type", "Network Type", "Networking options for sandbox", DataTypeStrMulti, "none", nil, []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil, 0, []string{ "No loopback interface", "No networking sandbox (sandbox shares network stack with host)", "Loopback device only", "Connect sandbox virtual ethernet interface to bridge" } } },
+	{ "bridge", "Bridge", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "dns_mode", "DNS Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, configOptNone },
 }
 
 var seccomp_config_template = []configVal {
-	{ "mode", "Mode", "Enforcement mode", DataTypeStrMulti, "disabled", nil, []interface{}{ "train", "whitelist", "blacklist", "disabled" }, ConfigOption{0, nil, 0} },
-	{ "enforce", "Enforce", "", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "debug", "Debug Mode", "Display full strace-style system call output (only when enforcement is set to false)", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "train", "Training Mode", "seccomp bpf training mode", DataTypeBool, true, nil, nil, ConfigOption{0, nil, 0} },
-	{ "train_output", "Training Data Output", "Path to generated training policy", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0} },
-	{ "whitelist", "seccomp Syscall Whitelist", "Path to seccomp bpf whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
-	{ "blacklist", "seccomp Syscall Blacklist", "Path to seccomp bpf blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull} },
-	{ "extradefs", "Extra Definitions", "seccomp bpf policy includes file, for adding variable definitions, macros etc.", DataTypeStrArray, []string{}, nil, nil, ConfigOption{0, nil, 0} },
+	{ "mode", "Mode", "Enforcement mode", DataTypeStrMulti, "disabled", nil, []interface{}{ "train", "whitelist", "blacklist", "disabled" }, configOptNone },
+	{ "enforce", "Enforce", "", DataTypeBool, true, nil, nil, configOptNone },
+	{ "debug", "Debug Mode", "Display full strace-style system call output (only when enforcement is set to false)", DataTypeBool, true, nil, nil, configOptNone },
+	{ "train", "Training Mode", "seccomp bpf training mode", DataTypeBool, true, nil, nil, configOptNone },
+	{ "train_output", "Training Data Output", "Path to generated training policy", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil} },
+	{ "whitelist", "seccomp Syscall Whitelist", "Path to seccomp bpf whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
+	{ "blacklist", "seccomp Syscall Blacklist", "Path to seccomp bpf blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
+	{ "extradefs", "Extra Definitions", "seccomp bpf policy includes file, for adding variable definitions, macros etc.", DataTypeStrArray, []string{}, nil, nil, configOptNone },
 }
 
 /*var whitelist_config_template = []configVal {
-	{ "", "Whitelist Entry", DataTypeStructArray, nil, nil, nil, ConfigOption{0, nil, 0} },
+	{ "", "Whitelist Entry", DataTypeStructArray, nil, nil, nil, configOptNone },
 } */
 
 var allTabs = map[string]*[]configVal { "general": &general_config, "x11": &X11_config, "network": &network_config, "seccomp": &seccomp_config, "whitelist": &whitelist_config, "blacklist": &blacklist_config, "forwarders": &forwarders_config }
@@ -1224,13 +1227,36 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 		} else if valConfig[i].Type == DataTypeStrMulti {
 			radios := make([]*gtk.RadioButton, 0)
 			sval := valConfig[i].Value.(string)
-			h.PackStart(get_label(valConfig[i].Label+":"), false, true, 10)
+			rlabel := get_label(valConfig[i].Label+":")
+
+			if valConfig[i].Description != "" {
+				rlabel.SetTooltipText(valConfig[i].Description)
+			}
+
+			h.PackStart(rlabel, false, true, 10)
+
+			tooltips := []string{}
+
+			if valConfig[i].Option.Tooltips != nil {
+				tooltips = valConfig[i].Option.Tooltips.([]string)
+			}
+
 			r1 := get_radiobutton(nil, valConfig[i].Possibilities[0].(string), sval==valConfig[i].Possibilities[0].(string))
+
+			if len(tooltips) > 0 && tooltips[0] != "" {
+				r1.SetTooltipText(tooltips[0])
+			}
+
 			radios = append(radios, r1)
 			h.PackStart(r1, false, true, 10)
 
 			for j := 1; j < len(valConfig[i].Possibilities); j++ {
 				rx := get_radiobutton(r1, valConfig[i].Possibilities[j].(string), sval==valConfig[i].Possibilities[j].(string))
+
+				if len(tooltips) > j && tooltips[j-1] != "" {
+					rx.SetTooltipText(tooltips[j])
+				}
+
 				radios = append(radios, rx)
 				h.PackStart(rx, false, true, 10)
 			}
