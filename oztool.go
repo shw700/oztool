@@ -17,13 +17,14 @@ import (
 	"github.com/gotk3/gotk3/gtk"
 	"github.com/gotk3/gotk3/gdk"
 	"github.com/gotk3/gotk3/glib"
-	"github.com/gotk3/gotk3/pango"
+//	"github.com/gotk3/gotk3/pango"
 	"log"
 	"fmt"
 	"os"
 	"io/ioutil"
 	"encoding/json"
 	"os/user"
+	"os/exec"
 	"strconv"
 	"reflect"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"regexp"
 	"path/filepath"
 //	"errors"
+	"time"
 )
 
 
@@ -181,7 +183,10 @@ var X11_config_template = []configVal {
 var network_config_template = []configVal {
 	{ "type", "Network Type", "Networking options for sandbox", DataTypeStrMulti, "none", nil, []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil, 0, []string{ "No loopback interface", "No networking sandbox (sandbox shares network stack with host)", "Loopback device only", "Connect sandbox virtual ethernet interface to bridge" } } },
 	{ "bridge", "Bridge", "", DataTypeString, "", nil, nil, configOptNone },
-	{ "dns_mode", "DNS Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, configOptNone },
+//	{ "dns_mode", "DNS Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, configOptNone },
+	{ "vpn", "VPN", "", DataTypeStrMulti, "openvpn", nil, []interface{}{ "openvpn" }, configOptNone },
+	{ "configpath", "Config Path", "Path to VPN configuration file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OpenVPN Configurations (*.ovpn)": {"*.ovpn"} }, ConfigVerifierFileExists, nil} },
+	{ "authfile", "Auth File", "Path to VPN authorization file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil} },
 }
 
 var seccomp_config_template = []configVal {
@@ -555,12 +560,7 @@ func fillNotebookPages(notebook *gtk.Notebook) {
 
 	for n := 0; n < len(allTabsOrdered); n++ {
 
-		box, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-
-                if err != nil {
-                        log.Fatal("Unable to create notebook page:", err)
-                }
-
+		box := get_vbox()
 		notebook.AppendPage(box, get_label_tt(allTabInfo[allTabsOrdered[n]].TabName, allTabInfo[allTabsOrdered[n]].Tooltip))
 		notebookPages[allTabsOrdered[n]] = box
 	}
@@ -929,13 +929,51 @@ func tv_click(tv *gtk.TreeView, listStore *gtk.ListStore) {
 
 }
 
-func setup_profiles_list(plist []string) *gtk.Box {
-	box, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+func setup_oz_monitor_list() (*gtk.Box, *gtk.ListStore) {
+	box := get_vbox()
+	scrollbox := get_scrollbox()
+	box.Add(scrollbox)
+	scrollbox.SetSizeRequest(300, 200)
+
+	tv, err := gtk.TreeViewNew()
 
 	if err != nil {
-		log.Fatal("Unable to create settings box:", err)
+		log.Fatal("Unable to create treeview:", err)
 	}
 
+	scrollbox.Add(tv)
+
+	sel, err := tv.GetSelection()
+
+	if err == nil {
+		sel.SetMode(gtk.SELECTION_SINGLE)
+	}
+
+	tv.SetHeadersClickable(true)
+
+	col1 := createColumn("Oz Profile", 0)
+	col2 := createColumn("Sandbox #", 1)
+	col1.SetResizable(true)
+	col2.SetResizable(true)
+	col1.SetSortColumnID(0)
+	col2.SetSortColumnID(1)
+	tv.AppendColumn(col1)
+	tv.AppendColumn(col2)
+
+	listStore := createListStore(2)
+	tv.SetModel(listStore)
+
+//	addRow(listStore, plist[n], pname, ppath)
+
+	tv.Connect("row-activated", func() {
+		fmt.Println("GOT THIS CLICK")
+	})
+
+	return box, listStore
+}
+
+func setup_profiles_list(plist []string) *gtk.Box {
+	box := get_vbox()
 	scrollbox := get_scrollbox()
 	box.Add(scrollbox)
 	scrollbox.SetSizeRequest(650, 200)
@@ -1021,16 +1059,6 @@ func clear_container(container *gtk.Box, descend bool) {
 	})
 }
 
-func get_vbox() *gtk.Box {
-	vbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-
-	if err != nil {
-		log.Fatal("Unable to create vertical box:", err)
-	}
-
-	return vbox
-}
-
 func get_scrollbox() *gtk.ScrolledWindow {
 	scrollbox, err := gtk.ScrolledWindowNew(nil, nil)
 
@@ -1049,6 +1077,16 @@ func get_hbox() *gtk.Box {
 	}
 
 	return hbox
+}
+
+func get_vbox() *gtk.Box {
+	vbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+
+	if err != nil {
+		log.Fatal("Unable to create vertical box:", err)
+	}
+
+	return vbox
 }
 
 func str_in_array(needle string, haystack[]string, nocase bool) bool {
@@ -1551,12 +1589,7 @@ func showProfileByPath(path string) {
 	profileBox.Add(Notebook)
 
 	for tname := range allTabs {
-		tbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-
-		if err != nil {
-			log.Fatal("Unable to create box:", err)
-		}
-
+		tbox := get_vbox()
 		populate_profile_tab(tbox, *allTabs[tname], false)
 		notebookPages[tname].Add(tbox)
 	}
@@ -1671,7 +1704,7 @@ func main() {
 
 	mainWin.SetPosition(gtk.WIN_POS_CENTER)
 
-	box, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
+	box := get_vbox()
 
 	if err != nil {
 		log.Fatal("Unable to create box:", err)
@@ -1682,12 +1715,82 @@ func main() {
 //	scrollbox.Add(box)
 	mainWin.Add(box)
 
+	treebox := get_hbox()
 	pbox := setup_profiles_list(ProfileNames)
+	monitor, mls := setup_oz_monitor_list()
+	fmt.Println("monitor = ", monitor)
 	profileBox = box
 	pbox.SetHAlign(gtk.ALIGN_START)
 	pbox.SetVAlign(gtk.ALIGN_FILL)
+	monitor.SetHAlign(gtk.ALIGN_END)
+	monitor.SetVAlign(gtk.ALIGN_FILL)
 	createMenu(box)
-	box.Add(pbox)
+	treebox.Add(pbox)
+	spacing := get_vbox()
+	spacing.Add(get_label(" "))
+	treebox.Add(spacing)
+	treebox.Add(monitor)
+	box.Add(treebox)
+
+
+
+	ticker := time.NewTicker(2 * time.Second)
+	quit := make(chan struct{})
+
+	go func() {
+		for {
+			select {
+				case <- ticker.C:
+//				fmt.Println("TIMER!!!")
+
+				cmd := exec.Command("/usr/bin/oz", "list")
+				outbytes, err := cmd.Output()
+
+				if err != nil {
+					log.Fatal("Error retrieving output of external command:", err)
+					return
+				}
+
+				outstr := string(outbytes)
+				olines := strings.Split(outstr, "\n")
+				mls.Clear()
+
+				for o := 0; o < len(olines); o++ {
+					olines[o] = strings.TrimSpace(olines[o])
+
+					if olines[o] == "" {
+						continue
+					}
+
+					toks := strings.Split(olines[o], ")")
+
+					if len(toks) != 2 {
+						fmt.Fprintln(os.Stderr, "Output from oz tool does not match expected data format!")
+						continue
+					}
+
+					toks[0] = strings.TrimSpace(toks[0])
+					toks[1] = strings.TrimSpace(toks[1])
+
+//					fmt.Println("TIMER: ", olines[o])
+					iter := mls.Append()
+					colVals := []interface{}{ toks[1], toks[0] }
+					colNums := []int{ 0, 1 }
+					err = mls.Set(iter, colNums, colVals)
+
+					if err != nil {
+						log.Fatal("Unable to add row:", err)
+					}
+
+				}
+
+			case <- quit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+
 
 	notebookPages = make(map[string]*gtk.Box)
 	Notebook = createNotebook()
@@ -1695,11 +1798,7 @@ func main() {
 
 	for t := 0; t < len(allTabsOrdered); t++ {
 		tname := allTabsOrdered[t]
-		tbox, err := gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0)
-
-		if err != nil {
-			log.Fatal("Unable to create box:", err)
-		}
+		tbox := get_vbox()
 
 		if _, failed := allTabsA[tname]; failed {
 			scrollbox := get_scrollbox()
