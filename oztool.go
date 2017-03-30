@@ -80,11 +80,25 @@ const (
 	ConfigVerifierArrayNoBlank = 16
 )
 
+type PrefStateEnabled struct {
+	State bool
+}
+
+var PrefEnabled = PrefStateEnabled{true}
+var PrefDisabled = PrefStateEnabled{false}
+
+type PrefState struct {
+	PrefName string
+	Value interface{}
+}
+
+
 type ConfigOption struct {
 	Flag uint
 	Option interface{}
 	Verification uint
 	Tooltips interface{}
+	ChangeSet map[interface{}][]PrefState
 }
 
 type configVal struct {
@@ -114,8 +128,9 @@ var notebookPages map[string]*gtk.Box
 var CurProfile map[string]*json.RawMessage
 var ProfileNames []string
 var alertProvider *gtk.CssProvider
+var LastOzList = ""
 
-var configOptNone ConfigOption = ConfigOption{ 0, nil, 0, nil }
+var configOptNone ConfigOption = ConfigOption{ 0, nil, 0, nil, nil }
 
 
 var extforwarder_config_template = []configVal {
@@ -131,7 +146,7 @@ var extforwarder_config_template = []configVal {
 }
 
 var whitelist_config_template = []configVal {
-	{ "path", "Path", "Path to be included in sandbox", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil} },
+	{ "path", "Path", "Path to be included in sandbox", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil, nil} },
 	{ "target", "Target", "Target path inside sandbox, if different", DataTypeString, "", nil, nil, configOptNone },
 	{ "read_only", "Read Only", "Mount specified file as read-only", DataTypeBool, true, nil, nil, configOptNone },
 	{ "can_create", "Can Create", "Create the specified file in the sandbox if it doesn't already exist", DataTypeBool, false, nil, nil, configOptNone },
@@ -142,7 +157,7 @@ var whitelist_config_template = []configVal {
 }
 
 var blacklist_config_template = []configVal {
-	{ "path", "Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil} },
+	{ "path", "Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil, nil} },
 	{ "no_follow", "No Follow", "", DataTypeBool, true, nil, nil, configOptNone },
 }
 
@@ -153,14 +168,14 @@ var envvar_config_template = []configVal {
 
 var general_config_template = []configVal {
 	{ "name", "Name", "Application sandbox name", DataTypeString, "", nil, nil, configOptNone },
-	{ "path", "Path", "Pathname to application executable", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil} },
+	{ "path", "Path", "Pathname to application executable", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil, nil} },
 	{ "paths", "Paths", "Additional list of path to binaries matching this sandbox", DataTypeStrArray, []string{}, nil, nil, configOptNone },
-	{ "profile_path", "Profile Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
+	{ "profile_path", "Profile Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OZ Profile Configs (*.json)": {"*.json"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil, nil} },
 	{ "default_params", "Default Parameters", "Default command line parameters to be passed to the application", DataTypeStrArray, []string{}, nil, nil, configOptNone },
 	{ "reject_user_args", "Reject User Arguments", "Discard any custom parameters passed to the application on the command line", DataTypeBool, false, nil, nil, configOptNone },
 	{ "auto_shutdown", "Auto Shutdown", "Automatically close sandbox after the application terminates", DataTypeStrMulti, "yes", nil, []interface{}{ "no", "yes", "soft" }, configOptNone },
 	{ "watchdog", "Watchdog", "Name of watchdog process(es) e.g. 'python'", DataTypeStrArray, []string{}, nil, nil, configOptNone },
-	{ "wrapper", "Wrapper", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
+	{ "wrapper", "Wrapper", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil, nil} },
 	{ "multi", "Create separate sandboxes on each application launch", "", DataTypeBool, false, nil, nil, configOptNone },
 	{ "no_sys_proc", "Disable sandbox mounting of /sys and /proc", "", DataTypeBool, false, nil, nil, configOptNone },
 	{ "no_defaults", "Disable default directory mounts", "", DataTypeBool, false, nil, nil, configOptNone },
@@ -170,23 +185,28 @@ var general_config_template = []configVal {
 
 var X11_config_template = []configVal {
 	{ "enabled", "Enabled", "Start X11 server inside sandbox", DataTypeBool, true, nil, nil, configOptNone },
-	{ "tray_icon", "Tray Icon", "A pathname to an image file to be used as the application's Xpra tray icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0, nil} },
-	{ "window_icon", "Window Icon", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0, nil} },
+	{ "tray_icon", "Tray Icon", "A pathname to an image file to be used as the application's Xpra tray icon", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0, nil, nil} },
+	{ "window_icon", "Window Icon", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionImage, nil, 0, nil, nil} },
 	{ "enable_tray", "Enable Tray", "Enable Xpra utility tray for this application", DataTypeBool, true, nil, nil, configOptNone },
 	{ "enable_notifications", "Enable Notifications", "Allow notifications on host desktop", DataTypeBool, true, nil, nil, configOptNone },
 	{ "disable_clipboard", "Disable Clipboard", "Disable copying and pasting for this application", DataTypeBool, true, nil, nil, configOptNone },
-	{ "audio_mode", "Audio Mode", "Audio settings", DataTypeStrMulti, "none", nil, []interface{}{ "none", "speaker", "full", "pulseaudio"}, ConfigOption{0, nil, 0, []string{ "No audio support", "Speaker support only", "Full audio support", "Pass Pulseaudio socket through to sandbox" } } },
+	{ "audio_mode", "Audio Mode", "Audio settings", DataTypeStrMulti, "none", nil, []interface{}{ "none", "speaker", "full", "pulseaudio"}, ConfigOption{0, nil, 0, []string{ "No audio support", "Speaker support only", "Full audio support", "Pass Pulseaudio socket through to sandbox" }, nil } },
 	{ "pulseaudio", "Enable PulseAudio", "Use host audio", DataTypeBool, true, nil, nil, configOptNone },
 	{ "border", "Border", "Draw border around application", DataTypeBool, true, nil, nil, configOptNone },
 }
 
+var StatesNetworkTypeNotBridge = []PrefState{ {"bridge", ""}, {"bridge", PrefDisabled}, {"vpn", PrefDisabled}, {"configpath", false}, {"configpath", PrefDisabled}, {"authfile", false}, {"authfile", PrefDisabled} }
+var StatesNetworkTypeBridge = []PrefState{ {"bridge", PrefEnabled}, {"vpn", true}, {"vpn", PrefEnabled}, {"configpath", true}, {"configpath", PrefEnabled}, {"authfile", true}, {"authfile", PrefEnabled } }
+
+var NetworkTypeChangeSet = map[interface{}][]PrefState{ "none": StatesNetworkTypeNotBridge, "host": StatesNetworkTypeNotBridge, "empty": StatesNetworkTypeNotBridge, "bridge": StatesNetworkTypeBridge }
+
 var network_config_template = []configVal {
-	{ "type", "Network Type", "Networking options for sandbox", DataTypeStrMulti, "none", nil, []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil, 0, []string{ "No loopback interface", "No networking sandbox (sandbox shares network stack with host)", "Loopback device only", "Connect sandbox virtual ethernet interface to bridge" } } },
+	{ "type", "Network Type", "Networking options for sandbox", DataTypeStrMulti, "none", nil, []interface{}{ "none", "host", "empty", "bridge" }, ConfigOption{0, nil, 0, []string{ "No loopback interface", "No networking sandbox (sandbox shares network stack with host)", "Loopback device only", "Connect sandbox virtual ethernet interface to bridge" }, NetworkTypeChangeSet } },
 	{ "bridge", "Bridge", "", DataTypeString, "", nil, nil, configOptNone },
 //	{ "dns_mode", "DNS Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, configOptNone },
 	{ "vpn", "VPN", "", DataTypeStrMulti, "openvpn", nil, []interface{}{ "openvpn" }, configOptNone },
-	{ "configpath", "Config Path", "Path to VPN configuration file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OpenVPN Configurations (*.ovpn)": {"*.ovpn"} }, ConfigVerifierFileExists, nil} },
-	{ "authfile", "Auth File", "Path to VPN authorization file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil} },
+	{ "configpath", "Config Path", "Path to VPN configuration file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OpenVPN Configurations (*.ovpn)": {"*.ovpn"} }, ConfigVerifierFileExists, nil, nil} },
+	{ "authfile", "Auth File", "Path to VPN authorization file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil, nil} },
 }
 
 var seccomp_config_template = []configVal {
@@ -194,9 +214,9 @@ var seccomp_config_template = []configVal {
 	{ "enforce", "Enforce", "", DataTypeBool, true, nil, nil, configOptNone },
 	{ "debug", "Debug Mode", "Display full strace-style system call output (only when enforcement is set to false)", DataTypeBool, true, nil, nil, configOptNone },
 	{ "train", "Training Mode", "seccomp bpf training mode", DataTypeBool, true, nil, nil, configOptNone },
-	{ "train_output", "Training Data Output", "Path to generated training policy", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil} },
-	{ "whitelist", "seccomp Syscall Whitelist", "Path to seccomp bpf whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
-	{ "blacklist", "seccomp Syscall Blacklist", "Path to seccomp bpf blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil} },
+	{ "train_output", "Training Data Output", "Path to generated training policy", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil, nil} },
+	{ "whitelist", "seccomp Syscall Whitelist", "Path to seccomp bpf whitelist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil, nil} },
+	{ "blacklist", "seccomp Syscall Blacklist", "Path to seccomp bpf blacklist", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "Seccomp Configs (*.seccomp)": {"*.seccomp"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil, nil} },
 	{ "extradefs", "Extra Definitions", "seccomp bpf policy includes file, for adding variable definitions, macros etc.", DataTypeStrArray, []string{}, nil, nil, configOptNone },
 }
 
@@ -252,6 +272,75 @@ func getConfigPath() string {
 
 	prefPath := usr.HomeDir + "/.oztool.json"
 	return prefPath
+}
+
+func applyConfigValChange(config configVal, configs []configVal, nval interface{}) {
+//	fmt.Println("*** in applyConfigValChange()")
+
+	if config.Option.ChangeSet == nil {
+		return
+	}
+
+//	fmt.Println("AAA / checking for val = ", nval, " / n changeset = ", len(cset))
+
+	if _, ok := config.Option.ChangeSet[nval]; !ok {
+		return
+	}
+
+	cset := config.Option.ChangeSet[nval]
+
+	var ps = PrefStateEnabled{true}
+
+	for i := 0; i < len(cset); i++ {
+//fmt.Println("TRYING: ", cset[i].PrefName)
+
+		for j := 0; j < len(configs); j++ {
+
+			if cset[i].PrefName == configs[j].Name {
+//fmt.Println("Setting a value : ", cset[i].PrefName, " -> ", cset[i].Value)
+
+				setEnabled := false
+
+				if reflect.TypeOf(cset[i].Value) == reflect.TypeOf(ps) {
+					setEnabled = true
+				}
+
+				if configs[j].Type == DataTypeString {
+
+					if setEnabled {
+//			fmt.Println("--- SETTING STATE -> ", cset[i].Value.(PrefStateEnabled).State)
+						configs[j].WidgetAssoc.(*gtk.Entry).SetSensitive(cset[i].Value.(PrefStateEnabled).State)
+					}
+
+				} else if configs[j].Type == DataTypeBool {
+
+					if setEnabled {
+//			fmt.Println("/// SETTING STATE -> ", cset[i].Value.(PrefStateEnabled).State)
+						configs[j].WidgetAssoc.(*gtk.CheckButton).SetSensitive(cset[i].Value.(PrefStateEnabled).State)
+					}
+
+				} else if configs[j].Type == DataTypeStrMulti {
+
+					if setEnabled {
+						buttons := configs[j].WidgetAssoc.([]*gtk.RadioButton)
+//			fmt.Println("~~~ SETTING STATE -> ", cset[i].Value.(PrefStateEnabled).State)
+
+						for b := 0; b < len(buttons); b++ {
+							buttons[b].SetSensitive(cset[i].Value.(PrefStateEnabled).State)
+						}
+
+					}
+
+				}
+/*	DataTypeStrArray DataTypeStructArray */
+			}
+
+		}
+
+	}
+
+
+//type configVal struct { Name string Label string Description string Type int Value interface{} WidgetAssoc interface{} Possibilities []interface{} Option ConfigOption
 }
 
 func savePreferences() bool {
@@ -1284,6 +1373,14 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 			} else {
 				wcheck := get_checkbox(valConfig[i].Label, valConfig[i].Value.(bool))
 
+				saved_i := i
+
+				if valConfig[i].Option.ChangeSet != nil {
+					wcheck.Connect("clicked", func() {
+						applyConfigValChange(valConfig[saved_i], valConfig, wcheck.GetActive())
+					})
+				}
+
 				if valConfig[i].Description != "" {
 					wcheck.SetTooltipText(valConfig[i].Description)
 				}
@@ -1311,6 +1408,19 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 
 			r1 := get_radiobutton(nil, valConfig[i].Possibilities[0].(string), sval==valConfig[i].Possibilities[0].(string))
 
+			saved_i := i
+
+			if valConfig[i].Option.ChangeSet != nil {
+				r1.Connect("clicked", func() {
+
+					if !r1.GetActive() {
+						return
+					}
+
+					applyConfigValChange(valConfig[saved_i], valConfig, valConfig[saved_i].Possibilities[0].(string))
+				})
+			}
+
 			if len(tooltips) > 0 && tooltips[0] != "" {
 				r1.SetTooltipText(tooltips[0])
 			}
@@ -1319,7 +1429,19 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 			h.PackStart(r1, false, true, 10)
 
 			for j := 1; j < len(valConfig[i].Possibilities); j++ {
+				saved_j := j
 				rx := get_radiobutton(r1, valConfig[i].Possibilities[j].(string), sval==valConfig[i].Possibilities[j].(string))
+
+				if valConfig[i].Option.ChangeSet != nil {
+					rx.Connect("clicked", func() {
+
+						if !rx.GetActive() {
+							return
+						}
+
+						applyConfigValChange(valConfig[saved_i], valConfig, valConfig[saved_i].Possibilities[saved_j].(string))
+					})
+				}
 
 				if len(tooltips) > j && tooltips[j-1] != "" {
 					rx.SetTooltipText(tooltips[j])
@@ -1752,6 +1874,14 @@ func main() {
 				}
 
 				outstr := string(outbytes)
+
+				if LastOzList == outstr {
+//					fmt.Println("Skipping update.... same")
+					continue
+				}
+
+				LastOzList = outstr
+
 				olines := strings.Split(outstr, "\n")
 				mls.Clear()
 
