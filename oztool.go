@@ -32,7 +32,7 @@ import (
 	"bufio"
 	"regexp"
 	"path/filepath"
-//	"errors"
+	"errors"
 	"time"
 )
 
@@ -77,7 +77,8 @@ const (
 	ConfigVerifierFileReadable = 2
 	ConfigVerifierFileExec = 4
 	ConfigVerifierFileCanBeNull = 8
-	ConfigVerifierArrayNoBlank = 16
+	ConfigVerifierStrNoBlank = 16
+	ConfigVerifierArrayNoBlank = 32
 )
 
 type PrefStateEnabled struct {
@@ -112,10 +113,19 @@ type configVal struct {
 	Option ConfigOption
 }
 
+type objSelected struct {
+	Frame *gtk.Frame
+	Configs [][]configVal
+	SelIndex int
+}
+
+var InitSelect = objSelected{ nil, nil, -1 }
+
 type settingsTab struct {
 	JName string
 	TabName string
 	Tooltip string
+	SelVal objSelected
 }
 
 
@@ -127,7 +137,8 @@ var Notebook *gtk.Notebook = nil
 var notebookPages map[string]*gtk.Box
 var CurProfile map[string]*json.RawMessage
 var ProfileNames []string
-var alertProvider *gtk.CssProvider
+var alertProvider *gtk.CssProvider = nil
+var selectProvider *gtk.CssProvider = nil
 var LastOzList = ""
 
 var configOptNone ConfigOption = ConfigOption{ 0, nil, 0, nil, nil }
@@ -162,7 +173,7 @@ var blacklist_config_template = []configVal {
 }
 
 var envvar_config_template = []configVal {
-	{ "name", "Name", "", DataTypeString, "", nil, nil, configOptNone },
+	{ "name", "Name", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionNone, nil, ConfigVerifierStrNoBlank, nil, nil} },
 	{ "value", "Value", "", DataTypeString, "", nil, nil, configOptNone },
 }
 
@@ -205,8 +216,8 @@ var network_config_template = []configVal {
 	{ "bridge", "Bridge", "", DataTypeString, "", nil, nil, configOptNone },
 //	{ "dns_mode", "DNS Mode", "", DataTypeStrMulti, "none", nil, []interface{}{ "none", "pass", "dhcp" }, configOptNone },
 	{ "vpn", "VPN", "", DataTypeStrMulti, "openvpn", nil, []interface{}{ "openvpn" }, configOptNone },
-	{ "configpath", "Config Path", "Path to VPN configuration file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OpenVPN Configurations (*.ovpn)": {"*.ovpn"} }, ConfigVerifierFileExists, nil, nil} },
-	{ "authfile", "Auth File", "Path to VPN authorization file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil, nil} },
+	{ "configpath", "Config Path", "Path to VPN configuration file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, map[string][]string{ "OpenVPN Configurations (*.ovpn)": {"*.ovpn"} }, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil, nil} },
+	{ "authfile", "Auth File", "Path to VPN authorization file", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists|ConfigVerifierFileCanBeNull, nil, nil} },
 }
 
 var seccomp_config_template = []configVal {
@@ -233,14 +244,14 @@ var templates = map[string][]configVal { "whitelist": whitelist_config_template,
 
 
 var allTabInfo = map[string]settingsTab {
-	"general": { "", "General", "General application settings" },
-	"x11": { "xserver", "X11", "X11 settings" },
-	"network": { "networking", "Network", "Network settings" },
-	"whitelist": { "whitelist", "Whitelist", "Host filesystem paths mounted into sandbox" },
-	"blacklist": { "blacklist", "Blacklist", "Restricted paths from host filesystem" },
-	"seccomp": { "seccomp", "seccomp", "System call filtering rules" },
-	"environment": { "environment", "Environment", "Application-specific environment variables" },
-	"forwarders": { "forwarders", "Forwarders", "Connection listeners forwarding into sandbox" },
+	"general": { "", "General", "General application settings", InitSelect },
+	"x11": { "xserver", "X11", "X11 settings", InitSelect },
+	"network": { "networking", "Network", "Network settings", InitSelect },
+	"whitelist": { "whitelist", "Whitelist", "Host filesystem paths mounted into sandbox", InitSelect },
+	"blacklist": { "blacklist", "Blacklist", "Restricted paths from host filesystem", InitSelect },
+	"seccomp": { "seccomp", "seccomp", "System call filtering rules", InitSelect },
+	"environment": { "environment", "Environment", "Application-specific environment variables", InitSelect },
+	"forwarders": { "forwarders", "Forwarders", "Connection listeners forwarding into sandbox", InitSelect },
 }
 
 
@@ -399,6 +410,43 @@ func loadPreferences() bool {
 	return true
 }
 
+func unsetSelected(widget *gtk.Button) {
+
+	if selectProvider == nil {
+		return
+	}
+
+	selectContext, err := widget.GetStyleContext()
+
+	if err != nil {
+		log.Fatal("Unable to get select context:", err)
+	}
+
+	selectContext.RemoveProvider(selectProvider)
+}
+
+func setSelected(widget *gtk.Button) {
+
+	if selectProvider == nil {
+		var err error
+		selectProvider, err = gtk.CssProviderNew()
+
+		if err != nil {
+			log.Fatal("Unable to create CSS provider:", err)
+		}
+
+		selectProvider.LoadFromData("button { border-bottom-color: green; border-top-color: green; border-left-color: green; border-right-color: green; background-color: green; color: green; } button:hover { color: green; }")
+	}
+
+	selectContext, err := widget.GetStyleContext()
+
+	if err != nil {
+		log.Fatal("Unable to get select context:", err)
+	}
+
+	selectContext.AddProvider(selectProvider, gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+}
+
 func setAlerted(widget *gtk.Entry) {
 
 	if alertProvider == nil {
@@ -489,6 +537,7 @@ func serializeConfigToJSON(config []configVal, secname string, fmtlevel int, inn
 			}
 
 			if config[i].Option.Verification > 0 {
+fmt.Println("XXX: verify -> ", config[i].Name)
 			err = verifyConfig(config[i].Option.Verification, estr)
 
 			if err != nil {
@@ -496,7 +545,8 @@ func serializeConfigToJSON(config []configVal, secname string, fmtlevel int, inn
 				rgb.Parse("#0000ff")
 				setAlerted(config[i].WidgetAssoc.(*gtk.Entry))
 //				config[i].WidgetAssoc.(*gtk.Entry).GrabFocus()
-				return "", err
+				errstr := "Could not verify config field \"" + config[i].Name + "\": " + err.Error()
+				return "", errors.New(errstr)
 			} else {
 				ctx, err := config[i].WidgetAssoc.(*gtk.Entry).GetStyleContext()
 
@@ -930,6 +980,8 @@ func verifyConfig(vflags uint, param string) error {
 			return err
 		}
 
+	} else if (vflags & ConfigVerifierStrNoBlank == ConfigVerifierStrNoBlank) && strings.TrimSpace(param) == "" {
+		return errors.New("Field is not permitted to be empty")
 	}
 
 	return nil
@@ -1221,9 +1273,54 @@ func get_narrow_button(label string) *gtk.Button {
 	return button
 }
 
-func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, template *[]configVal) {
+var widget_counter = 31336
+
+func getUniqueWidgetID() int {
+	widget_counter++
+
+	if widget_counter == 0 {
+		widget_counter++
+	}
+
+	return widget_counter
+}
+
+func rebalanceMap(emap map[int]int, ind int) map[int]int {
+
+	for key := range emap {
+
+		if emap[key] >= ind {
+			(emap[key])--
+		}
+
+	}
+
+	return emap
+}
+
+func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, template *[]configVal, jname string, dbutton *gtk.Button, selbase int, emap *map[int]int, bpool *[]*gtk.Button) {
 	ctrlbox := get_hbox()
 	ctrlbox.SetMarginTop(10)
+
+	var delButton *gtk.Button = nil
+
+	if dbutton != nil {
+		delButton = dbutton
+	}
+
+	entryMap := emap
+
+	if entryMap == nil {
+		tmpMap := make(map[int]int)
+		entryMap = &tmpMap
+	}
+
+	selButtonPool := bpool
+
+	if selButtonPool == nil {
+		tmpPool :=  make([]*gtk.Button, 0)
+		selButtonPool = &tmpPool
+	}
 
 	if template != nil {
 		b := get_button("New")
@@ -1233,17 +1330,53 @@ func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, templat
 			new_entry := make([]configVal, len(*template))
 			copy(new_entry, *template)
 			new_entryA := [][]configVal{ new_entry }
-			populate_profile_tabA(container, new_entryA, nil)
+			populate_profile_tabA(container, new_entryA, nil, jname, delButton, len(valConfigs), entryMap, selButtonPool)
 			container.ShowAll()
+//fmt.Println("XXX: old configval = ")
+//fmt.Println(valConfigs)
+			valConfigs = append(valConfigs, new_entry)
+			allTabsA[jname] = &valConfigs
 		})
 
 		ctrlbox.PackStart(b, false, true, 5)
-		b = get_button("Delete")
-		ctrlbox.PackStart(b, false, true, 5)
+		delButton = get_button("Delete")
+		delButton.SetSensitive(false)
+
+		delButton.Connect("clicked", func() {
+			fmt.Println("DELETED")
+			tab := allTabInfo[jname]
+
+//	fmt.Println("XXX: selindex = ", tab.SelVal.SelIndex, "jname = ", jname, " / frame = ", tab.SelVal.Frame)
+
+			if tab.SelVal.Frame != nil {
+				tab.SelVal.Frame.Destroy()
+				tab.SelVal.Frame = nil
+				allTabInfo[jname] = tab
+
+				this_map := *(entryMap)
+				vi := this_map[tab.SelVal.SelIndex]
+				// XXX: theoretically, this could fail...
+				// fmt.Println("vi = ", vi)
+				valConfigs = append(valConfigs[:vi], valConfigs[vi+1:]...)
+				allTabsA[jname] = &valConfigs
+				*entryMap = rebalanceMap(*entryMap, 1)
+			}
+
+
+
+			delButton.SetSensitive(false)
+//                        tab.SelVal.Configs = valConfigs
+//                        tab.SelVal.SelIndex = saved_i
+//fmt.Println("XXX: final selbutton pool size = ", len(*selButtonPool))
+		})
+
+		ctrlbox.PackStart(delButton, false, true, 5)
 		container.Add(ctrlbox)
 	}
 
 	for i := 0; i < len(valConfigs); i++ {
+		saved_i := selbase + i
+		unique := getUniqueWidgetID()
 		frame, err := gtk.FrameNew("")
 
 		if err != nil {
@@ -1259,11 +1392,32 @@ func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, templat
 		h := get_hbox()
 		sbutton := get_button("Select")
 		sbutton.SetMarginStart(5)
+		*selButtonPool = append(*selButtonPool, sbutton)
+
+		sbutton.Connect("clicked", func() {
+//			fmt.Println("SELECTED: ", jname)
+			tab := allTabInfo[jname]
+			tab.SelVal.Frame = frame
+			tab.SelVal.Configs = valConfigs
+			tab.SelVal.SelIndex = unique
+//			this_map := *(entryMap)
+//fmt.Println("XXX: setting selindex = ", tab.SelVal.SelIndex, " -> ", this_map[tab.SelVal.SelIndex])
+			allTabInfo[jname] = tab
+			delButton.SetSensitive(true)
+
+			for s := 0; s < len(*selButtonPool); s++ {
+				unsetSelected((*selButtonPool)[s])
+			}
+
+			setSelected(sbutton)
+		})
+
 		h.Add(sbutton)
 		v.Add(h)
 		populate_profile_tab(v, valConfigs[i], true)
 		frame.Add(v)
 		container.PackStart(frame, false, true, 10)
+		(*entryMap)[unique] = saved_i
 	}
 
 }
@@ -1934,7 +2088,7 @@ func main() {
 			scrollbox := get_scrollbox()
 			scrollbox.SetSizeRequest(600, 500)
 			tmp := templates[tname]
-			populate_profile_tabA(tbox, *allTabsA[tname], &tmp)
+			populate_profile_tabA(tbox, *allTabsA[tname], &tmp, tname, nil, 0, nil, nil)
 			scrollbox.Add(tbox)
 			notebookPages[tname].Add(scrollbox)
 			continue
