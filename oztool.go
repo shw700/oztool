@@ -4,7 +4,6 @@
  *
  * Determine serialization behavior for values left to default
  * Loading of tab contents requires a single code path, not two duplicate ones
- * Image file choosing should reload icon preview
  *
  * Directory picker option
  */
@@ -1500,6 +1499,51 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 						img.SetFromPixbuf(pb)
 					}
 
+					fcb, err := gtk.FileChooserButtonNew("Select a file", gtk.FILE_CHOOSER_ACTION_OPEN)
+
+					if err != nil {
+						log.Fatal("Unable to create file choose button:", err)
+					}
+
+					fcb.Connect("file-set", func() {
+						val.SetText(fcb.GetFilename())
+
+						pb, err := gdk.PixbufNewFromFileAtScale(fcb.GetFilename(), 48, 48, true)
+
+						if err != nil {
+							fmt.Println("Error: could not load pixel buf from file:", err)
+						} else {
+							img.SetFromPixbuf(pb)
+						}
+
+					})
+
+//					fcb.SetCurrentName(valConfig[i].Value.(string))
+					fcb.SetCurrentFolder(filepath.Dir(valConfig[i].Value.(string)))
+
+					img_filters := make(map[string][]string)
+					img_filters["PNG files (*.png)"] = []string{ "*.png" }
+					img_filters["SVG files (*.svg)"] = []string{ "*.svg" }
+					img_filters["JPEG files (*.jpg, *.jpeg))"] = []string{ "*.jpg", "*.jpeg" }
+
+					for fname := range img_filters {
+
+						ff, err := gtk.FileFilterNew()
+
+						if err != nil {
+							log.Fatal("Unable to create file filter:", err)
+						}
+
+						ff.SetName(fname)
+
+						for g := 0; g < len(img_filters[fname]); g++ {
+							ff.AddPattern(img_filters[fname][g])
+						}
+
+						fcb.AddFilter(ff)
+					}
+
+					h.PackStart(fcb, false, true, 10)
 				}
 
 			} else if valConfig[i].Option.Flag == ConfigOptionFilePicker || valConfig[i].Option.Flag == ConfigOptionDirPicker {
@@ -1519,7 +1563,7 @@ func populate_profile_tab(container *gtk.Box, valConfig []configVal, tight bool)
 					val.SetText(fcb.GetFilename())
 				})
 
-				fcb.SetCurrentName(valConfig[i].Value.(string))
+//				fcb.SetCurrentName(valConfig[i].Value.(string))
 				fcb.SetCurrentFolder(filepath.Dir(valConfig[i].Value.(string)))
 
 				if cflag == gtk.FILE_CHOOSER_ACTION_OPEN && valConfig[i].Option.Option != nil {
