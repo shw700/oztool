@@ -2,9 +2,7 @@
  * Might require gtkAction implementation in order to support shortcuts in menu items:
  * http://www.kksou.com/php-gtk2/sample-codes/set-up-menu-using-GtkAction-Part-3-add-accelerators-with-labels.php
  *
- * Validation for string arrays (allow empty, valid file, etc)
  * Determine serialization behavior for values left to default
- * Complex arrays: new, delete, select need to be implemented
  * Loading of tab contents requires a single code path, not two duplicate ones
  * Image file choosing should reload icon preview
  *
@@ -157,7 +155,7 @@ var extforwarder_config_template = []configVal {
 }
 
 var whitelist_config_template = []configVal {
-	{ "path", "Path", "Path to be included in sandbox", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil, nil} },
+	{ "path", "Path", "Path to be included in sandbox", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil, nil} },
 	{ "target", "Target", "Target path inside sandbox, if different", DataTypeString, "", nil, nil, configOptNone },
 	{ "read_only", "Read Only", "Mount specified file as read-only", DataTypeBool, true, nil, nil, configOptNone },
 	{ "can_create", "Can Create", "Create the specified file in the sandbox if it doesn't already exist", DataTypeBool, false, nil, nil, configOptNone },
@@ -168,7 +166,7 @@ var whitelist_config_template = []configVal {
 }
 
 var blacklist_config_template = []configVal {
-	{ "path", "Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, 0, nil, nil} },
+	{ "path", "Path", "", DataTypeString, "", nil, nil, ConfigOption{ConfigOptionFilePicker, nil, ConfigVerifierFileExists, nil, nil} },
 	{ "no_follow", "No Follow", "", DataTypeBool, true, nil, nil, configOptNone },
 }
 
@@ -545,7 +543,7 @@ fmt.Println("XXX: verify -> ", config[i].Name)
 				rgb.Parse("#0000ff")
 				setAlerted(config[i].WidgetAssoc.(*gtk.Entry))
 //				config[i].WidgetAssoc.(*gtk.Entry).GrabFocus()
-				errstr := "Could not verify config field \"" + config[i].Name + "\": " + err.Error()
+				errstr := "Could not verify config field \"" + config[i].Name + "\" in section " + secname + ": " + err.Error()
 				return "", errors.New(errstr)
 			} else {
 				ctx, err := config[i].WidgetAssoc.(*gtk.Entry).GetStyleContext()
@@ -751,6 +749,44 @@ func createListStore(nadded int) *gtk.ListStore {
 
 func menu_New() {
 	fmt.Println("NEW!")
+	Notebook.Destroy()
+	reset_configs()
+
+	empty_whitelist := make([][]configVal, 0)
+	allTabsA["whitelist"] = &empty_whitelist
+
+	empty_blacklist := make([][]configVal, 0)
+	allTabsA["blacklist"] = &empty_blacklist
+
+	empty_environment := make([][]configVal, 0)
+	allTabsA["environment"] = &empty_environment
+
+	empty_forwarders := make([][]configVal, 0)
+        allTabsA["forwarders"] = &empty_forwarders
+
+	notebookPages = make(map[string]*gtk.Box)
+	Notebook = createNotebook()
+	profileBox.Add(Notebook)
+
+	for t := 0; t < len(allTabsOrdered); t++ {
+		tname := allTabsOrdered[t]
+		tbox := get_vbox()
+
+		if _, failed := allTabsA[tname]; failed {
+			scrollbox := get_scrollbox()
+			scrollbox.SetSizeRequest(600, 500)
+			tmp := templates[tname]
+			populate_profile_tabA(tbox, *allTabsA[tname], &tmp, tname, nil, 0, nil, nil)
+			scrollbox.Add(tbox)
+			notebookPages[tname].Add(scrollbox)
+			continue
+		}
+
+		populate_profile_tab(tbox, *allTabs[tname], false)
+		notebookPages[tname].Add(tbox)
+	}
+
+	profileBox.ShowAll()
 }
 
 func menu_Open() {
@@ -1301,6 +1337,7 @@ func rebalanceMap(emap map[int]int, ind int) map[int]int {
 func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, template *[]configVal, jname string, dbutton *gtk.Button, selbase int, emap *map[int]int, bpool *[]*gtk.Button) {
 	ctrlbox := get_hbox()
 	ctrlbox.SetMarginTop(10)
+fmt.Printf("XXX: populatingA on section %s with len = %d\n", jname, len(valConfigs))
 
 	var delButton *gtk.Button = nil
 
@@ -1346,7 +1383,7 @@ func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, templat
 			fmt.Println("DELETED")
 			tab := allTabInfo[jname]
 
-//	fmt.Println("XXX: selindex = ", tab.SelVal.SelIndex, "jname = ", jname, " / frame = ", tab.SelVal.Frame)
+	fmt.Println("XXX: selindex = ", tab.SelVal.SelIndex, "jname = ", jname, " / frame = ", tab.SelVal.Frame)
 
 			if tab.SelVal.Frame != nil {
 				tab.SelVal.Frame.Destroy()
@@ -1356,7 +1393,7 @@ func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, templat
 				this_map := *(entryMap)
 				vi := this_map[tab.SelVal.SelIndex]
 				// XXX: theoretically, this could fail...
-				// fmt.Println("vi = ", vi)
+				fmt.Println("vi = ", vi)
 				valConfigs = append(valConfigs[:vi], valConfigs[vi+1:]...)
 				allTabsA[jname] = &valConfigs
 				*entryMap = rebalanceMap(*entryMap, 1)
@@ -1375,7 +1412,12 @@ func populate_profile_tabA(container *gtk.Box, valConfigs [][]configVal, templat
 	}
 
 	for i := 0; i < len(valConfigs); i++ {
-		saved_i := selbase + i
+		saved_i := i + selbase
+
+/*		if emap != nil {
+			saved_i += len(*emap)
+		} */
+
 		unique := getUniqueWidgetID()
 		frame, err := gtk.FrameNew("")
 
