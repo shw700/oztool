@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"errors"
 	"time"
+	"io"
 )
 
 
@@ -137,6 +138,8 @@ var ProfileNames []string
 var alertProvider *gtk.CssProvider = nil
 var selectProvider *gtk.CssProvider = nil
 var LastOzList = ""
+var monitorTV *gtk.TreeView = nil
+var monitorLS *gtk.ListStore = nil
 
 var configOptNone ConfigOption = ConfigOption{ 0, nil, 0, nil, nil }
 
@@ -264,10 +267,18 @@ var action_menu = []menuVal {
 	{ "_Run application", "Run the application in its oz sandbox", nil, "<Shift><Alt>F1" },
 }
 
+var sandbox_menu = []menuVal {
+	{ "Launch _shell", "Launch a shell inside its running oz sandbox", menu_Launch, "<Shift><Alt>S" },
+	{ "Browse _filesystem", "Browse the local filesystem visible to the sandbox", menu_BrowseFS, "<Shift><Alt>F" },
+	{ "View _logs", "View log files for running oz sandbox", menu_Logs, "<Shift><Alt>L" },
+	{ "_Kill", "Kill running sandbox", menu_Kill, "<Shift><Alt>K" },
+	{ "Relaunch _XPRA", "Relaunch XPRA for running sandbox", menu_RelaunchXPRA, "<Shift><Alt>X" },
+}
+
 var general_config, X11_config, network_config, seccomp_config, whitelist_config, blacklist_config, environment_config, forwarders_config []configVal
 
-var allMenus = map[string][]menuVal { "File": file_menu, "Action": action_menu }
-var allMenusOrdered = []string{ "File", "Action" }
+var allMenus = map[string][]menuVal { "File": file_menu, "Action": action_menu, "Sandbox": sandbox_menu }
+var allMenusOrdered = []string{ "File", "Action", "Sandbox" }
 
 
 func getConfigPath() string {
@@ -844,9 +855,219 @@ func menu_Save() {
 	fmt.Println(jstr)
 }
 
+func menu_Kill() {
+	fmt.Println("KILL!")
+
+	if promptChoice("Are you sure you want to kill this process?") {
+		launchOzCmd("kill", "")
+	}
+}
+
+func menu_RelaunchXPRA() {
+	fmt.Println("RELAUNCH XPRA")
+	launchOzCmd("relaunchxpra", "")
+}
+
+func menu_Logs() {
+	fmt.Println("LOGS")
+	launchOzCmd("logs", "")
+}
+
+func menu_BrowseFS() {
+	fmt.Println("BROWSE FS")
+	launchOzCmd("shell", "nautilus")
+}
+
+func menu_Launch() {
+	fmt.Println("LAUNCH!")
+	launchOzCmd("shell", "")
+}
+
 func menu_Quit() {
 	fmt.Println("Quitting on user instruction.")
 	gtk.MainQuit()
+}
+
+func launchOzCmd(subcmd string, input string) bool {
+	sid, err := getSelectedSandboxID()
+
+	if err != nil {
+		log.Fatal("Unable to get selected sandbox ID:", err)
+	} else if sid == -1 {
+		promptError("Could not determine currently selected Oz sandbox ID")
+		return false
+	}
+
+	fmt.Println("Launching oz command on sandbox ID: ", sid)
+
+	cmdstr := "xterm"
+	cmdargs := []string{ "-e", "oz", subcmd, strconv.Itoa(sid) }
+
+	if subcmd == "logs" {
+//		cmdargs = []string{ "-e", "watch", "oz", "logs", strconv.Itoa(sid) }
+		shcmd := fmt.Sprintf("while `true`; do clear; oz logs %d; read; done", sid)
+		cmdargs = []string{ "-e", "/bin/bash", "-c", shcmd }
+	} else if subcmd == "shell" && input == "nautilus" {
+		cmdstr = "oz"
+		cmdargs = []string{ "shell", strconv.Itoa(sid) }
+	}
+
+	fmt.Println("launching process -> ", cmdstr, strings.Join(cmdargs, " "))
+	ozCmd := exec.Command(cmdstr, cmdargs...)
+
+	var stdin io.WriteCloser = nil
+	var oreader io.ReadCloser = nil
+	var ereader io.ReadCloser = nil
+
+	if input != "" {
+		stdin, err = ozCmd.StdinPipe()
+
+		if err != nil {
+			log.Fatal("Unable to get stdin handle for new process:", err)
+		}
+
+		oreader, err = ozCmd.StdoutPipe()
+
+		if err != nil {
+			log.Fatal("Unable to get stdout handle for new process:", err)
+		}
+
+		ereader, err = ozCmd.StderrPipe()
+
+		if err != nil {
+			log.Fatal("Unable to get stdout handle for new process:", err)
+		}
+
+	}
+
+	go func() {
+		err = ozCmd.Start()
+
+		if err != nil {
+			fmt.Println("Error launching application: ", err)
+		}
+
+		if oreader != nil {
+			buf := make([]byte, 1024)
+			nread, err := oreader.Read(buf)
+
+			if err != nil {
+				fmt.Println("Error reading output from oz shell: ", err)
+			} else {
+				fmt.Println("Read ", nread, " bytes after termination of oz process")
+//				fmt.Println(string(buf))
+			}
+
+		}
+
+		if stdin != nil {
+			input += "; exit 0; \r\n\r\n"
+			io.WriteString(stdin, input)
+		}
+
+		if ereader != nil {
+			buf := make([]byte, 1024)
+			nread, err := ereader.Read(buf)
+
+			if err != nil {
+				fmt.Println("Error reading stderr from oz shell: ", err)
+			} else {
+				fmt.Println("Read", nread, "stderr bytes after termination of oz process")
+				fmt.Println(string(buf))
+			}
+
+		}
+
+		err = ozCmd.Wait()
+		fmt.Println("Application returned.")
+
+		if err != nil {
+			fmt.Println("Error waiting on application: ", err)
+		}
+
+
+		if stdin != nil {
+			stdin.Close()
+		}
+
+	}()
+
+	return true
+}
+
+
+func getSelectedSandboxID() (int, error) {
+	sel, err := monitorTV.GetSelection()
+
+	if err != nil {
+		return -1, err
+	}
+
+	rows := sel.GetSelectedRows(monitorLS)
+
+	if rows.Length() > 0 {
+		rdata := rows.NthData(0)
+		tm, err := monitorTV.GetModel()
+
+		if err != nil {
+			return -1, err
+		}
+
+		iter, err := tm.GetIter(rdata.(*gtk.TreePath))
+
+		if err != nil {
+			return -1, err
+		}
+
+		val, err := tm.GetValue(iter, 1)
+
+		if err != nil {
+			return -1, err
+		}
+
+		gval, err := val.GoValue()
+
+		if err != nil {
+			return -1, err
+		}
+
+		gival, err := strconv.Atoi(gval.(string))
+
+		if err != nil {
+			return -1, nil
+		}
+
+		return gival, nil
+	}
+
+	return -1, nil
+}
+
+func popupContextMenu(button int, time uint32) {
+	const mname = "Sandbox"
+	menu, err := gtk.MenuNew()
+
+	if err != nil {
+		log.Fatal("Unable to create context menu:", err)
+	}
+
+	for i := 0; i < len(allMenus[mname]); i++ {
+		mi, err := gtk.MenuItemNewWithMnemonic(allMenus[mname][i].Name)
+
+		if err != nil {
+			log.Fatal("Unable to create menu item:", err)
+		}
+
+		if allMenus[mname][i].Function != nil {
+			mi.Connect("activate", allMenus[mname][i].Function)
+		}
+
+		menu.Append(mi)
+	}
+
+
+	menu.ShowAll()
+	menu.PopupAtMouseCursor(nil, nil, button, time)
 }
 
 func createMenu(box*gtk.Box) {
@@ -985,6 +1206,12 @@ func editStrArray(input []string, fvalidate int) []string {
 	return stra
 }
 
+func promptChoice(msg string) bool {
+	dialog := gtk.MessageDialogNew(mainWin, 0, gtk.MESSAGE_ERROR, gtk.BUTTONS_YES_NO, msg)
+	result := dialog.Run()
+	dialog.Destroy()
+	return result == int(gtk.RESPONSE_YES)
+}
 
 func promptError(msg string) {
         dialog := gtk.MessageDialogNew(mainWin, 0, gtk.MESSAGE_ERROR, gtk.BUTTONS_CLOSE, "Error: %s", msg)
@@ -1050,7 +1277,6 @@ func tv_click(tv *gtk.TreeView, listStore *gtk.ListStore) {
 	if err == nil {
 		rows := sel.GetSelectedRows(listStore)
 
-		fmt.Println("RETURNED ROWS: ", rows.Length())
 		if rows.Length() > 0 {
 			rdata := rows.NthData(0)
 
@@ -1141,8 +1367,36 @@ func setup_oz_monitor_list() (*gtk.Box, *gtk.ListStore) {
 
 //	addRow(listStore, plist[n], pname, ppath)
 
+	monitorTV = tv
+	monitorLS = listStore
+
 	tv.Connect("row-activated", func() {
 		fmt.Println("GOT THIS CLICK")
+	})
+
+	tv.Connect("button-press-event",  func(tv *gtk.TreeView, event *gdk.Event) {
+		if event == nil {
+			return
+		}
+
+		eb := &gdk.EventButton{ Event: event }
+
+		if eb.Type() == gdk.EVENT_BUTTON_PRESS && eb.Button() == 3 {
+//			fmt.Printf("x = %v, y = %v, button = %v, state = %v, buttonval = %v\n", eb.X(), eb.Y(), eb.Button(), eb.State(), eb.ButtonVal())
+
+			sel, err := monitorTV.GetSelection()
+
+			if err == nil {
+				rows := sel.GetSelectedRows(listStore)
+
+				if rows.Length() > 0 {
+					popupContextMenu(int(eb.Button()), eb.Time())
+				}
+
+			}
+
+		}
+
 	})
 
 	return box, listStore
