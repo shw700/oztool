@@ -2204,8 +2204,28 @@ func showProfileByPath(path string) {
 	Notebook = createNotebook()
 	profileBox.Add(Notebook)
 
-	for tname := range allTabs {
+/*	for tname := range allTabs {
 		tbox := get_vbox()
+		populate_profile_tab(tbox, *allTabs[tname], false)
+		notebookPages[tname].Add(tbox)
+	} */
+
+
+
+	for t := 0; t < len(allTabsOrdered); t++ {
+		tname := allTabsOrdered[t]
+		tbox := get_vbox()
+
+		if _, failed := allTabsA[tname]; failed {
+			scrollbox := get_scrollbox()
+			scrollbox.SetSizeRequest(600, 500)
+			tmp := templates[tname]
+			populate_profile_tabA(tbox, *allTabsA[tname], &tmp, tname, nil, 0, nil, nil)
+			scrollbox.Add(tbox)
+			notebookPages[tname].Add(scrollbox)
+			continue
+		}
+
 		populate_profile_tab(tbox, *allTabs[tname], false)
 		notebookPages[tname].Add(tbox)
 	}
