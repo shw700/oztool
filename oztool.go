@@ -4,8 +4,8 @@
  *
  * Determine serialization behavior for values left to default
  * Loading of tab contents requires a single code path, not two duplicate ones
+ * Need to handle special vars like ${HOME} and ${XDG_DOWNLOAD_DIR} etc.
  *
- * Directory picker option
  */
 
 package main
@@ -800,12 +800,15 @@ func menu_New() {
 }
 
 func menu_Open() {
-	fmt.Println("OPEN!")
+	ppath := pickJSONFile(false)
+
+	if ppath != "" {
+		Notebook.Destroy()
+		showProfileByPath(ppath)
+	}
 }
 
 func menu_Save() {
-	fmt.Println("SAVE!")
-
 	jstr := ""
 
 	for i := 0; i < len(allTabsOrdered); i++ {
@@ -853,6 +856,18 @@ func menu_Save() {
 	jstr += "}"
 
 	fmt.Println(jstr)
+
+	ppath := pickJSONFile(true)
+
+	if ppath != "" {
+		err := ioutil.WriteFile(ppath, []byte(jstr+"\n"), 0644)
+
+		if err != nil {
+			promptError(err.Error())
+		}
+
+	}
+
 }
 
 func menu_Kill() {
@@ -2550,4 +2565,43 @@ func loadProfileFile(fpath string) (map[string]*json.RawMessage, error) {
         if p.Networking.IpByte <= 1 || p.Networking.IpByte > 254 {
                 p.Networking.IpByte = 0
         } */
+}
+
+func pickJSONFile(save bool) string {
+	title := "Save data to profile"
+	action := gtk.FILE_CHOOSER_ACTION_SAVE
+	btext := "Save"
+	retval := ""
+
+	if !save {
+		title = "Load data from profile"
+		action = gtk.FILE_CHOOSER_ACTION_OPEN
+		btext = "Open"
+	}
+
+	dialog, err := gtk.FileChooserDialogNewWith1Button(title, mainWin, action, btext, gtk.RESPONSE_OK)
+
+	if err != nil {
+		log.Fatal("Unable to create file choice dialog:", err)
+	}
+
+	ff, err := gtk.FileFilterNew()
+
+	if err != nil {
+		log.Fatal("Unable to create profile file filter:", err)
+	}
+
+	dialog.SetCurrentFolder("/var/lib/oz/cells.d")
+	ff.SetName("Oz profiles (*.json")
+	ff.AddPattern("*.json")
+	dialog.AddFilter(ff)
+
+	choice := dialog.Run()
+
+	if choice == int(gtk.RESPONSE_OK) {
+		retval = dialog.GetFilename()
+	}
+
+	dialog.Destroy()
+	return retval
 }
